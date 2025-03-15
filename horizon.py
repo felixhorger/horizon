@@ -11,12 +11,25 @@ from pdftools import *
 from utils import *
 
 # TODO: yaml file with config for e.g. gnupg path or pubkey name and editor/viewer etc
-# TODO: need to keep a list of all ever created random strings, so that it is impossible to ever create the
-# same random string twice
 # TODO: add value private/public (and make previously published papers private)
 # TODO: add type as xapian value (text, code, data)
 # TODO: command to open the last open entry for editing/cd
 
+# TODO: is a good strategy to have good defaults, and ask at the end if that's ok? Or just add and the user can edit if necessary?
+
+# TODO: list of files excluded from verisoning like outputs of scripts
+
+
+# Database fields:
+# text (can be text file, can be pdf file, optionally with tex): store content of text file/pdf in general, and store tex code in X: field  TODO: what about markdown
+# code (code repos, scripts): store content of readme in general, and code in X: field
+# data: store content of readme in general
+
+# Can use git rebase to get rid of old commits
+
+# PDFs are commited in the tex repo
+# Figures used in the pdf are part of another repo in another entry, but can be referenced via the horizon archive,
+# which should also work if the actual files are located elsewhere thanks to the symlinks
 
 
 def add_entry(db, path, move, directory):
@@ -29,9 +42,11 @@ def add_entry(db, path, move, directory):
 	# U: link to data or code TODO: this should be a field in the horizon data, not in the data base ...
 	# TODO: author needs to be double saved, once in database (lower case...) and once in horizon entry
 
+	code = ""
+
 	# Try to get filename, title and text
 	if path is not None: # TODO: this if statement needs refactoring, put each branch in func
-		if directory: print("Warning: --directory option without effect")
+		if directory: print("Warning: --dir option without effect")
 
 		filename = os.path.basename(path)
 		ui = input("Filename (default is provided name, space replaced by underscore): ")
@@ -40,22 +55,44 @@ def add_entry(db, path, move, directory):
 		filename, ext = os.path.splitext(filename)
 
 		if os.path.isfile(path):
-			if len(ext): filetype = ext[1:].lower()
-			else:        filetype = "txt"
-		else: filetype = "" # TODO: need to figure out how to get this, count files/lines in dir
+			if len(ext):
+				filetype = ext[1:].lower()
+				# TODO: this can be improved I think, dunno how
+				if filetype in ("csv", "dat", "raw"): entrytype = "data"
+				elif filetype in ("txt", "pdf"): entrytype = "text"
+				else:
+					entrytype = "code"
+					f = open(path, "r")
+					code = f.read()
+					f.close()
+			else:
+				filetype = "txt"
+				entrytype = "text"
 
-		# Title and text
-		if   filetype == "pdf": title, text = pdf2text(path)
-		elif filetype == "txt":
-			f = open(path)
-			text = f.read()
-			f.close()
-			title = get_title_from_text(text)
+			# Title and text
+			if filetype == "pdf":
+				title, text = pdf2text(path)
+				# TODO: check for tex, maybe add option for this
+				code = "TODO"
+			elif filetype == "txt":
+				f = open(path, "r")
+				text = f.read()
+				f.close()
+				title = get_title_from_text(text)
+			else:
+				title = "" # TODO
+				text = ""
+			title = title
+			text = text
+
 		else:
-			title = "" # TODO
-			text = ""
-		title = title
-		text = text
+			# TODO: need to figure out how to get this, count files/lines in dir
+			filetype = ""
+			entrytype = "" # TODO: could make an enum, and only produce string when creating the xapian entry
+
+			if entrytype == "code":
+				pass
+
 
 	else:
 
@@ -106,7 +143,7 @@ def add_entry(db, path, move, directory):
 	elif move: shutil.move(path, new_path)
 	else: os.symlink(path, new_path)
 
-	add_document(db, uid, author, abstract, filetype, filename, institution, keywords, contributors, title, text)
+	add_document(db, uid, author, abstract, entrytype, filetype, filename, institution, keywords, contributors, title, text, code)
 
 	return
 

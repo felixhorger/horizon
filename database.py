@@ -28,7 +28,7 @@ def open_database(path):
 		return
 	return db
 
-def add_document(db, uid, author, abstract, filetype, filename, institution, keywords, contributors, title, text):
+def add_document(db, uid, author, abstract, entrytype, filetype, filename, institution, keywords, contributors, title, text, code):
 	# TODO: order of args? or make dict?
 
 	# Add to database
@@ -39,6 +39,9 @@ def add_document(db, uid, author, abstract, filetype, filename, institution, key
 	# TODO: on a similar note, could make the database global in here? bad practice?
 
 	doc.set_data(uid)
+
+	# Add entry type as value
+	doc.add_value(0, entrytype)
 
 	# Add terms
 	# Q: id (which is identification+pubkey+random+ext)
@@ -60,14 +63,16 @@ def add_document(db, uid, author, abstract, filetype, filename, institution, key
 	termgenerator.index_text(normalise_unicode(contributors), 1, "O")
 	termgenerator.index_text(normalise_unicode(title),        1, "S")
 
+	# TODO: similar to author, it would be good not to stem this? Would be good to know what the overhead is of stemming
+	# Otherwise I'm afraid I need to look into query parser/stemmer?
+	if len(code): termgenerator.index_text(normalise_unicode(code), 1, "X")
+
 	# Text for general search
 	termgenerator.index_text(text)
 	#termgenerator.increase_termpos()
 	#terms = text.split()  # Split text into terms (just for illustration)
 	#for term in terms:
 	#	doc.add_term(term.lower())  # Add terms to make it searchable
-
-	# TODO Values: doc.add_value(1, asdasd)
 
 	# Replace doc
 	try: db.replace_document(uid, doc)
@@ -96,6 +101,7 @@ def search(db, querystring, offset=0, pagesize=10):
 	queryparser.add_prefix("keywords", "K")
 	queryparser.add_prefix("contributors", "O")
 	queryparser.add_prefix("title", "S")
+	queryparser.add_prefix("code", "X")
 
 	query = queryparser.parse_query(querystring) #, xapian.QueryParser.FLAG_WILDCARD)
 	enquire = xapian.Enquire(db)
