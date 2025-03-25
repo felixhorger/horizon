@@ -17,6 +17,8 @@ from meta import *
 
 # TODO: for text based files, the preview does not need to be stored, can just be `head ...`, how to implement this?
 
+# TODO: the preview of text files should not be saved in yml, it can be read from file on the fly
+
 
 # TODO: for updating code repos, which are stored outside of horizon, and have a different name, it would be good to have a list of real paths in horizon, so that the user can do `horizon update .` and it knows which uid this has
 # TODO: yaml file with config for e.g. gnupg path or pubkey name and editor/viewer etc
@@ -25,6 +27,8 @@ from meta import *
 
 # TODO: is a good strategy to have good defaults, and ask at the end if that's ok?
 # Or just add and the user can edit if necessary?
+
+# TODO: it is possible to enable syntax highlighting in preview of TermMenu
 
 # Database fields:
 # text (can be text file, can be pdf file, optionally with tex): store content of text file/pdf in general, and store tex code in X: field  TODO: what about markdown
@@ -48,19 +52,39 @@ class Entry:
 		self,
 		title,
 		Type, # uppercase not to overwrite type()
+		filestats,
 		cmd="echo No command to open entry provided",
-		readme="",
+		readme="", # Has to be provided if entry is dictionary, otherwise no file can be opened TODO: could make this a list, too? in case there are files whose text should be indexed
 		private=True,
-		datafiles={},
-		preview=""
+		codefiles=[],
+		preview="",
+		name = "",
+		ext = "",
+		text = "",
+		code = "",
+		author = "",
+		institution = "",
+		abstract = "",
+		keywords = "",
+		contributors = ""
 	):
 		self.title = title
 		self.Type = Type
+		self.filestats = filestats
 		self.cmd = cmd
 		self.readme = readme
 		self.private = private
-		self.datafiles = datafiles
+		self.codefiles = codefiles
 		self.preview = preview
+		self.name = name
+		self.ext = ext
+		self.text = text
+		self.code = code
+		self.author = author
+		self.institution = institution
+		self.abstract = abstract
+		self.keywords = keywords
+		self.contributors = contributors
 		return
 
 	def __repr__(self):
@@ -71,7 +95,9 @@ class Entry:
 			f"\tCMD:\t\t\"{self.cmd}\"\n"
 			f"\tPrivate:\t{self.private}\n"
 			f"\tData:\t\t{self.datafiles}\n"
-			f"\tPreview:\t{repr(self.preview[:32])}\n\n"
+			f"\tPreview:\t{repr(self.preview[:32])}\n",
+			f"\tStats:\t{self.filestats}\n\n"
+			# TODO the rest
 		)
 
 
@@ -126,8 +152,10 @@ def add_entry(db, path, move, directory):
 	# 'path' exists (checked at beginning of this func),
 	# so can move if required. 'new_path' is valid because of the above.
 	# If 'move' is not true, but path is provided, create a symlink (also know that path exists)
-	if move:               shutil.move(path, new_path)
-	elif path is not None: os.symlink(path, new_path)
+	if move: shutil.move(path, new_path)
+	elif path is not None:
+		os.symlink(path, new_path)
+		new_path = path # Need to do this for the file stats, the symlink has its own stats
 
 
 	# Get code/text/title
@@ -157,11 +185,15 @@ def add_entry(db, path, move, directory):
 	keywords = ""
 	contributors = ""
 
+	# TODO: make dict of all the meta data, to make the below two function calls prettier
+	# TODO: think about removing the entry type, and just using a dictionary,
+	# could be nice to keep class bc of defaults and repr for printing?
+
 	# Add to database
 	add_document(
 		db,
 		uid,
-		filename,
+		name,
 		ext,
 		entrytype,
 		text,
@@ -176,13 +208,55 @@ def add_entry(db, path, move, directory):
 
 	# Create entry for meta info
 	preview = ""
-	if   entrytype == "text": preview = text
+	if   entrytype == "text": preview = text # TODO: this should only be first couple of lines
 	elif entrytype == "code": preview = code
-	entry = Entry(title, entrytype, cmd, preview=preview)
+	readme = ""
+	private = True
+	codefiles = []
+	entry = Entry(
+		title,
+		entrytype,
+		get_filestats(new_path),
+		cmd,
+		readme,
+		private,
+		codefiles,
+		preview,
+		name,
+		ext,
+		text,
+		code,
+		author,
+		institution,
+		abstract,
+		keywords,
+		contributors
+	)
 
 	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
 
 	return
+
+def update_entry(db, uid, entry):
+	add_document(
+		db,
+		uid,
+		entry.name,
+		entry.ext,
+		entry.Type,
+		entry.text,
+		entry.code,
+		entry.title,
+		entry.author,
+		entry.institution,
+		entry.abstract,
+		entry.keywords,
+		entry.contributors
+	)
+
+	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
+	return
+	
 
 
 def delete_entry(db, uid):
@@ -198,10 +272,30 @@ def delete_entry(db, uid):
 
 
 def open_entry(uid):
+	# Open
 	entry = meta[uid]
 	filename = os.path.join(uid, entry.readme) if len(entry.readme) else uid
-	subprocess.run([entry.cmd, os.path.join(horizon_archive, filename)])
+	path = os.path.realpath(os.path.join(horizon_archive, filename))
+	subprocess.run([entry.cmd, path])
+
 	# Check if need to update database
+	new_filestats = get_filestats(path)
+	if file_did_not_change(entry.filestats, new_filestats): return
+	entry.filestats = new_filestats
+
+	is_text = entry.Type == "text"
+	is_code = entry.Type == "code"
+	if is_text or is_code:
+		with open(path, "r") as f:
+			text = f.read()
+		if is_text or len(entry.readme): entry.text = text
+		elif is_code: entry.code = text
+		entry.preview = text # TODO
+	else:
+		raise Exception("Not implemented, need to do for PDF")
+	
+	update_entry(db, uid, entry)
+
 	return
 
 
@@ -232,6 +326,7 @@ def find_entries(db, query):
 			cursor_index=selection,
 			accept_keys=("enter", "backspace", "tab"),
 			preview_command=lambda uid: (f"\033[33m{uid}\033[0m", meta[uid].preview),
+			#preview_command="cat archive/{}",
 			preview_size=0.4,
 			preview_title="Preview"
 		)
@@ -318,11 +413,11 @@ PUBKEY = "Felix" # TODO, how? need horizon config
 pubkey = get_pubkey(gpg, PUBKEY)
 
 # Execute commands
-if   args.cmd == "add":    add_entry(db, args.path, args.move, args.dir)
-elif args.cmd == "delete": delete_entry(db, args.entries)
-elif args.cmd == "find":   find_entries(db, args.query)
-elif args.cmd == "open":   open_entry(args.entry)
-
-# Clean up
-db.close()
+try:
+	if   args.cmd == "add":    add_entry(db, args.path, args.move, args.dir)
+	elif args.cmd == "delete": delete_entry(db, args.entries)
+	elif args.cmd == "find":   find_entries(db, args.query)
+	elif args.cmd == "open":   open_entry(args.entry)
+finally:
+	db.close()
 
