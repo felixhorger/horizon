@@ -174,16 +174,18 @@ def add_entry(db, path, move, directory):
 		contributors
 	)
 
-
 	# Create entry for meta info
-	entry = Entry(uid, title, entrytype, cmd, preview=text)
+	preview = ""
+	if   entrytype == "text": preview = text
+	elif entrytype == "code": preview = code
+	entry = Entry(uid, title, entrytype, cmd, preview=preview)
 
 	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
 
 	return
 
 
-def delete_entries(db, entries):
+def delete_entry(db, uid):
 	#try:
 	#	db.delete_document(1)
 	#except xapian.DatabaseError as e:
@@ -191,17 +193,15 @@ def delete_entries(db, entries):
 	#finally:
 	#	db.close()
 	#return
-	for entry in entries:
-		print(f"Deleting {entry}")
+	print(f"Deleting {uid}")
 	return
 
 
-def open_entries(entries):
-	for uid in entries:
-		entry = meta[uid]
-		filename = os.path.join(uid, entry.readme) if len(entry.readme) else uid
-		subprocess.run([entry.cmd, os.path.join(horizon_archive, filename)])
-		# Check if need to update database
+def open_entry(uid):
+	entry = meta[uid]
+	filename = os.path.join(uid, entry.readme) if len(entry.readme) else uid
+	subprocess.run([entry.cmd, os.path.join(horizon_archive, filename)])
+	# Check if need to update database
 	return
 
 
@@ -219,27 +219,35 @@ def find_entries(db, query):
 	entries = search(db, " ".join(query), offset=0, pagesize=10)
 	if len(entries) == 0: return
 
-	terminal_menu = stm.TerminalMenu(
-		[
-			#f"[{get_alphabet(i)}] " +
-			meta[uid].title +
-			"|" +
-			(uid if len(meta[uid].preview) else "")
-			for i, uid in enumerate(entries)
-		],
-		multi_select=True,
-		accept_keys=("enter", "backspace"),
-		preview_command=lambda uid: (f"\033[33m{uid}\033[0m", meta[uid].preview),
-		preview_size=0.4,
-		preview_title="Preview"
-	)
-	selection = terminal_menu.show()
+	while True:
+		terminal_menu = stm.TerminalMenu(
+			[
+				#f"[{get_alphabet(i)}] " +
+				meta[uid].title +
+				"|" +
+				(uid if len(meta[uid].preview) else "")
+				for i, uid in enumerate(entries)
+			],
+			accept_keys=("enter", "backspace", "tab"),
+			preview_command=lambda uid: (f"\033[33m{uid}\033[0m", meta[uid].preview),
+			preview_size=0.4,
+			preview_title="Preview"
+		)
+		selection = terminal_menu.show()
 
-	if selection is None: return
+		if selection is None: return
 
-	key = terminal_menu.chosen_accept_key
-	if   key == "enter" or len(selection) > 1: open_entries([entries[i] for i in selection])
-	elif key == "backspace":                   cd_to_entry(entries[selection[-1]])
+		key = terminal_menu.chosen_accept_key
+		uid = entries[selection]
+		if key == "tab":
+			cd_to_entry(uid)
+			break
+		else: 
+			open_entry(uid)
+			if   key == "enter":     break
+			elif key == "backspace": continue
+
+	return
 
 
 
@@ -309,9 +317,9 @@ pubkey = get_pubkey(gpg, PUBKEY)
 
 # Execute commands
 if   args.cmd == "add":    add_entry(db, args.path, args.move, args.dir)
-elif args.cmd == "delete": delete_entries(db, args.entries)
+elif args.cmd == "delete": delete_entry(db, args.entries)
 elif args.cmd == "find":   find_entries(db, args.query)
-elif args.cmd == "open":   open_entries(args.entry)
+elif args.cmd == "open":   open_entry(args.entry)
 
 # Clean up
 db.close()
