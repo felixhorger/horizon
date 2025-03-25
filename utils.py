@@ -66,10 +66,7 @@ def get_title_from_text(text):
 	while i < len(lines) and len(l) == 0:
 		l = lines[i].strip()
 		i += 1
-	if i == len(lines): title = ""
-	else:               title = l
-
-	return title
+	return l
 
 
 #def get_alphabet(i):
