@@ -42,10 +42,10 @@ from meta import *
 
 
 
+# TODO: should I save UID in here (redundancy bc file name!)
 class Entry:
 	def __init__(
 		self,
-		uid,
 		title,
 		Type, # uppercase not to overwrite type()
 		cmd="echo No command to open entry provided",
@@ -54,7 +54,6 @@ class Entry:
 		datafiles={},
 		preview=""
 	):
-		self.uid = uid
 		self.title = title
 		self.Type = Type
 		self.cmd = cmd
@@ -67,13 +66,12 @@ class Entry:
 	def __repr__(self):
 		return (
 			f"Horizon Entry:\n"
-			f"\tUID:\t\t{self.uid}\n"
 			f"\tTitle:\t\t\"{self.title}\"\n"
 			f"\tType:\t\t{self.Type}\n"
 			f"\tCMD:\t\t\"{self.cmd}\"\n"
 			f"\tPrivate:\t{self.private}\n"
 			f"\tData:\t\t{self.datafiles}\n"
-			f"\tPreview:\t{repr(self.preview[:32])}"
+			f"\tPreview:\t{repr(self.preview[:32])}\n\n"
 		)
 
 
@@ -116,7 +114,9 @@ def add_entry(db, path, move, directory):
 	if not directory and (path is None or os.path.isfile(path)): # is file?
 		# Is a file
 		cmd, entrytype, ext = interpret_mime(filename)
-		if path is None: subprocess.run([cmd, new_path])
+		if path is None:
+			subprocess.run([cmd, new_path])
+			if not os.path.isfile(new_path): return
 	else:
 		# Is a directory
 		cmd, entrytype, ext = "cd", "unknown", ""
@@ -141,7 +141,7 @@ def add_entry(db, path, move, directory):
 		if ext == "pdf":
 			title, text = pdf2text(new_path)
 			code = "TODO read tex files if there" # TODO: check for tex, maybe add option for this
-		elif ext == "txt":
+		elif ext == "txt" or len(ext) == 0:
 			text = read_text_file(new_path)
 			title = get_title_from_text(text)
 		else:
@@ -178,7 +178,7 @@ def add_entry(db, path, move, directory):
 	preview = ""
 	if   entrytype == "text": preview = text
 	elif entrytype == "code": preview = code
-	entry = Entry(uid, title, entrytype, cmd, preview=preview)
+	entry = Entry(title, entrytype, cmd, preview=preview)
 
 	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
 
@@ -219,15 +219,17 @@ def find_entries(db, query):
 	entries = search(db, " ".join(query), offset=0, pagesize=10)
 	if len(entries) == 0: return
 
+	selection = 0
 	while True:
 		terminal_menu = stm.TerminalMenu(
 			[
 				#f"[{get_alphabet(i)}] " +
-				meta[uid].title +
+				(meta[uid].title if len(meta[uid].title) else "Unknown") +
 				"|" +
 				(uid if len(meta[uid].preview) else "")
 				for i, uid in enumerate(entries)
 			],
+			cursor_index=selection,
 			accept_keys=("enter", "backspace", "tab"),
 			preview_command=lambda uid: (f"\033[33m{uid}\033[0m", meta[uid].preview),
 			preview_size=0.4,
