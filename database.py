@@ -67,7 +67,6 @@ def add_document(
 	# O: contributors? How to find these? or better from whom you got it
 	# S: title
 
-	doc.add_boolean_term(u"Q" + uid)
 	termgenerator.index_text(normalise_unicode(author),       1, "A") # number is word frequency, i.e. a weight for match ranking? chatgpt...
 	termgenerator.index_text(normalise_unicode(abstract),     1, "B")
 	termgenerator.index_text(normalise_unicode(filetype),     1, "E")
@@ -88,10 +87,14 @@ def add_document(
 	#for term in terms:
 	#	doc.add_term(term.lower())  # Add terms to make it searchable
 
+	uid = u"Q" + uid
+	doc.add_boolean_term(uid)
+
 	# Replace doc
 	try: db.replace_document(uid, doc)
-	except xapian.DatabaseError as e: print(f"Error adding document to Xapian: {e}")
-	finally: db.close()
+	except xapian.DatabaseError as e:
+		print(f"Error adding document to Xapian: {e}")
+		db.close()
 
 	return
 
@@ -106,7 +109,7 @@ def search(db, querystring, offset=0, pagesize=10):
 	queryparser.set_stemmer(get_stemmer())
 	queryparser.set_stemming_strategy(queryparser.STEM_SOME)
 
-	queryparser.add_prefix("id", "Q")
+	queryparser.add_prefix("uid", "Q")
 	queryparser.add_prefix("author", "A")
 	queryparser.add_prefix("abstract", "B")
 	queryparser.add_prefix("filetype", "E")
