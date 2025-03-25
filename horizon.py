@@ -9,115 +9,96 @@ from auth import *
 from database import *
 from pdftools import *
 from utils import *
+from meta import *
 
+
+# TODO: most important is triggering an update to the database entry if file is changed and offering mechanism to do it manually
+
+
+# TODO: for text based files, the preview does not need to be stored, can just be `head ...`, how to implement this?
+
+
+# TODO: for updating code repos, which are stored outside of horizon, and have a different name, it would be good to have a list of real paths in horizon, so that the user can do `horizon update .` and it knows which uid this has
 # TODO: yaml file with config for e.g. gnupg path or pubkey name and editor/viewer etc
 # TODO: add value private/public (and make previously published papers private)
-# TODO: add type as xapian value (text, code, data)
 # TODO: command to open the last open entry for editing/cd
 
-# TODO: is a good strategy to have good defaults, and ask at the end if that's ok? Or just add and the user can edit if necessary?
-
-# TODO: list of files excluded from verisoning like outputs of scripts
-
+# TODO: is a good strategy to have good defaults, and ask at the end if that's ok?
+# Or just add and the user can edit if necessary?
 
 # Database fields:
 # text (can be text file, can be pdf file, optionally with tex): store content of text file/pdf in general, and store tex code in X: field  TODO: what about markdown
 # code (code repos, scripts): store content of readme in general, and code in X: field
 # data: store content of readme in general
 
-# Can use git rebase to get rid of old commits
-
 # PDFs are commited in the tex repo
 # Figures used in the pdf are part of another repo in another entry, but can be referenced via the horizon archive,
 # which should also work if the actual files are located elsewhere thanks to the symlinks
 
+# Can use git rebase to get rid of old commits
 
+# TODO: for data: one entry per dataset, because they share a description.
+# Add the possibility to not to load the data files, but they can be downloaded via a link
+
+
+
+class Entry:
+	def __init__(
+		self,
+		uid,
+		title,
+		Type, # uppercase not to overwrite type()
+		cmd="echo No command to open entry provided",
+		readme="",
+		private=True,
+		datafiles={},
+		preview=""
+	):
+		self.uid = uid
+		self.title = title
+		self.Type = Type
+		self.cmd = cmd
+		self.readme = readme
+		self.private = private
+		self.datafiles = datafiles
+		self.preview = preview
+		return
+
+	def __repr__(self):
+		return (
+			f"Horizon Entry:\n"
+			f"\tUID:\t\t{self.uid}\n"
+			f"\tTitle:\t\t\"{self.title}\"\n"
+			f"\tType:\t\t{self.Type}\n"
+			f"\tCMD:\t\t\"{self.cmd}\"\n"
+			f"\tPrivate:\t{self.private}\n"
+			f"\tData:\t\t{self.datafiles}\n"
+			f"\tPreview:\t{repr(self.preview[:32])}"
+		)
+
+
+# TODO: should make it so that files are only moved once everything is settled. Maybe even let the user create new files in /tmp, so that they can be deleted, and the horizon archive is not corrupted
 def add_entry(db, path, move, directory):
 	# TODO: need a mechanism that prints the file path in case of an error, the user can save it
-	# TODO: think about outsourcing all the xapian stuff to database.py, and remove xapian dep here
 
 	print(f"Adding entry {path}")
 
-	# TODO: initialise horizon entry (make class for this)
-	# U: link to data or code TODO: this should be a field in the horizon data, not in the data base ...
-	# TODO: author needs to be double saved, once in database (lower case...) and once in horizon entry
-
-	code = ""
-
-	# Try to get filename, title and text
-	if path is not None: # TODO: this if statement needs refactoring, put each branch in func
-		if directory: print("Warning: --dir option without effect")
-
+	# Get a name
+	# TODO: Could do: don't ask for ui, make it part of cmdline cmd. If no path given, no name. If path given and exists do add it ... and if path does not exist then make new
+	if path is None: filename = input("Name: ").strip().replace(" ", "_")
+	else:
+		if not os.path.exists(path): raise FileNotFoundError(f"Provided path does not exist: \"{path}\"")
 		filename = os.path.basename(path)
 		ui = input("Filename (default is provided name, space replaced by underscore): ")
 		if len(ui): filename = ui
 		filename.strip().replace(" ", "_")
-		filename, ext = os.path.splitext(filename)
-
-		if os.path.isfile(path):
-			if len(ext):
-				filetype = ext[1:].lower()
-				# TODO: this can be improved I think, dunno how
-				if filetype in ("csv", "dat", "raw"): entrytype = "data"
-				elif filetype in ("txt", "pdf"): entrytype = "text"
-				else:
-					entrytype = "code"
-					f = open(path, "r")
-					code = f.read()
-					f.close()
-			else:
-				filetype = "txt"
-				entrytype = "text"
-
-			# Title and text
-			if filetype == "pdf":
-				title, text = pdf2text(path)
-				# TODO: check for tex, maybe add option for this
-				code = "TODO"
-			elif filetype == "txt":
-				f = open(path, "r")
-				text = f.read()
-				f.close()
-				title = get_title_from_text(text)
-			else:
-				title = "" # TODO
-				text = ""
-			title = title
-			text = text
-
-		else:
-			# TODO: need to figure out how to get this, count files/lines in dir
-			filetype = ""
-			entrytype = "" # TODO: could make an enum, and only produce string when creating the xapian entry
-
-			if entrytype == "code":
-				pass
+	
+	name, ext = os.path.splitext(filename)
 
 
-	else:
-
-		filename = input("Filename: ").strip().replace(" ", "_")
-
-		if directory:
-			ext = ""
-			filetype = ""
-		else:
-			filename, ext = os.path.splitext(filename)
-			if ext == "": filetype = "txt"
-			else:         filetype = ext[1:]
-
-		title = ""
-		text = ""
-
-
-	author = pubkey["uids"][0].lower() # TODO: why is uids a list? and why uidS and not uid
-	abstract = "" # TODO: input("Abstract (can add later TODO): ") probably better to add later or get from PDF/readme automatically
-	institution = "" # TODO same ... add horizon edit
-	keywords = "" # TODO input("Keywords: ").split()
-	contributors = "" # TODO
-
+	# Generate new UID
 	fingerprint = get_pubkey(gpg, pubkey)["fingerprint"]
-	prefix = filename + "_" + fingerprint
+	prefix = (name + "_" if len(name) else "") + fingerprint
 
 	# Generate a new path for within the horizon archive
 	num_bits = 4*4
@@ -128,22 +109,76 @@ def add_entry(db, path, move, directory):
 		uid = prefix + ("%0.4x" % r) + ext
 		new_path = os.path.join(horizon_archive, uid)
 		if not os.path.exists(new_path): break
-	if i == max_int-1: raise Exception("Could not find a non-existing filename, this should not happen!?")
+	if i == max_int-1: raise Exception("Could not find a non-existing file name for the horizon archive, this should not happen!?")
 
-	# Create/move file/symlink at new path
-	if path is None:
-		if move: raise Exception("Path not provided for option --move")
-		f = open(new_path, "x")
-		f.close()
-		open_entries([new_path]) # TODO: don't use path here but horizon entry?
-		f = open(new_path, "r")
-		text = f.read()
-		f.close()
-		title = get_title_from_text(text)
-	elif move: shutil.move(path, new_path)
-	else: os.symlink(path, new_path)
 
-	add_document(db, uid, author, abstract, entrytype, filetype, filename, institution, keywords, contributors, title, text, code)
+	# Create file or directory
+	if not directory and (path is None or os.path.isfile(path)): # is file?
+		# Is a file
+		cmd, entrytype, ext = interpret_mime(filename)
+		if path is None: subprocess.run([cmd, new_path])
+	else:
+		# Is a directory
+		cmd, entrytype, ext = "cd", "unknown", ""
+		if directory: os.makedirs(new_path)
+
+
+	# 'path' exists (checked at beginning of this func),
+	# so can move if required. 'new_path' is valid because of the above.
+	# If 'move' is not true, but path is provided, create a symlink (also know that path exists)
+	if move:               shutil.move(path, new_path)
+	elif path is not None: os.symlink(path, new_path)
+
+
+	# Get code/text/title
+	title = ""
+	code = ""
+	text = ""
+	if   entrytype == "code":
+		code = read_text_file(new_path)
+		title = name
+	elif entrytype == "text":
+		if ext == "pdf":
+			title, text = pdf2text(new_path)
+			code = "TODO read tex files if there" # TODO: check for tex, maybe add option for this
+		elif ext == "txt":
+			text = read_text_file(new_path)
+			title = get_title_from_text(text)
+		else:
+			print(f"Warning: text file extension not recognised, dunno what to do with it ({ext})")
+	elif entrytype == "data":
+		print("Sorry not implemented for data files yet")
+
+
+	# Get info for database
+	author = pubkey["uids"][0].lower() # TODO: why is uids a list? and why uidS and not uid
+	institution = ""
+	abstract = ""
+	keywords = ""
+	contributors = ""
+
+	# Add to database
+	add_document(
+		db,
+		uid,
+		filename,
+		ext,
+		entrytype,
+		text,
+		code,
+		title,
+		author,
+		institution,
+		abstract,
+		keywords,
+		contributors
+	)
+
+
+	# Create entry for meta info
+	entry = Entry(uid, title, entrytype, cmd, preview=text)
+
+	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
 
 	return
 
@@ -162,10 +197,11 @@ def delete_entries(db, entries):
 
 
 def open_entries(entries):
-	for entry in entries:
-		print(f"Opening {entry}")
-		# TODO: pick right program for this entry
-		subprocess.run(["vim", entry])
+	for uid in entries:
+		entry = meta[uid]
+		filename = os.path.join(uid, entry.readme) if len(entry.readme) else uid
+		subprocess.run([entry.cmd, os.path.join(horizon_archive, filename)])
+		# Check if need to update database
 	return
 
 
@@ -184,21 +220,26 @@ def find_entries(db, query):
 	if len(entries) == 0: return
 
 	terminal_menu = stm.TerminalMenu(
-		entries,
+		[
+			#f"[{get_alphabet(i)}] " +
+			meta[uid].title +
+			"|" +
+			(uid if len(meta[uid].preview) else "")
+			for i, uid in enumerate(entries)
+		],
 		multi_select=True,
 		accept_keys=("enter", "backspace"),
-		preview_command="echo Need to implement this into SimpleTerminalMenu",
-		preview_size=0.5
+		preview_command=lambda uid: (f"\033[33m{uid}\033[0m", meta[uid].preview),
+		preview_size=0.4,
+		preview_title="Preview"
 	)
 	selection = terminal_menu.show()
 
 	if selection is None: return
 
 	key = terminal_menu.chosen_accept_key
-	if   key == "enter" or len(selection) > 1:
-		open_entries([os.path.join(horizon_archive, entries[i]) for i in selection])
-	elif key == "backspace":
-		cd_to_entry(entries[selection[0]])
+	if   key == "enter" or len(selection) > 1: open_entries([entries[i] for i in selection])
+	elif key == "backspace":                   cd_to_entry(entries[selection[-1]])
 
 
 
@@ -208,9 +249,10 @@ parser = argparse.ArgumentParser(description="Expand yours")
 subparsers = parser.add_subparsers(dest="cmd", metavar="COMMAND", required=True)
 
 add_parser = subparsers.add_parser("add", help="Expands your horizon")
-add_parser.add_argument("path", metavar="PATH", nargs="?", help="Optional path to existing file or folder")
+add_parser_group = add_parser.add_mutually_exclusive_group()
+add_parser_group.add_argument("path", metavar="PATH", nargs="?", help="Optional path to existing file or folder")
+add_parser_group.add_argument("--dir", action="store_true", help="Create a directory not a file")
 add_parser.add_argument("--move", action="store_true", help="Move file to location managed by horizon")
-add_parser.add_argument("--dir", action="store_true", help="Create a directory not a file")
 
 delete_parser = subparsers.add_parser("delete", help="Delete entry by ID")
 delete_parser.add_argument("entries", metavar="ID", nargs="+", help="The item to delete")
@@ -238,21 +280,32 @@ args = parser.parse_args()
 # Setup
 
 # Change to horizon directory
-if hasattr(args, "path") and args.path is not None: args.path = os.path.abspath(args.path)
+if hasattr(args, "path"):
+	if args.path is not None: args.path = os.path.abspath(args.path)
+	elif args.move: raise Exception("Path not provided for option --move")
 horizon_root = os.path.dirname(__file__)
 os.chdir(horizon_root)
+# Note: horizon_root might lie somewhere else, but for now it is kept simple,
+# in general the devs should use os.path.join(horizon_root, "...")
 
 # Check archive folder
 horizon_archive = os.path.join(horizon_root, "archive")
+horizon_meta    = os.path.join(horizon_root, "meta")
 if not os.path.exists(horizon_archive): os.makedirs(horizon_archive)
+if not os.path.exists(horizon_meta):    os.makedirs(horizon_meta)
+
+# Database
+db = open_database("db")
+
+# Metadata
+meta = {}
+for f in os.listdir(horizon_meta):
+	meta[os.path.splitext(f)[0]] = read_yaml(os.path.join(horizon_meta, f), Entry)
 
 # Public key
 gpg = open_gpg()
 PUBKEY = "Felix" # TODO, how? need horizon config
 pubkey = get_pubkey(gpg, PUBKEY)
-
-# Database
-db = open_database("db")
 
 # Execute commands
 if   args.cmd == "add":    add_entry(db, args.path, args.move, args.dir)

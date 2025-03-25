@@ -28,7 +28,21 @@ def open_database(path):
 		return
 	return db
 
-def add_document(db, uid, author, abstract, entrytype, filetype, filename, institution, keywords, contributors, title, text, code):
+def add_document(
+		db,
+		uid,
+		filename,
+		filetype, # extension
+		entrytype,
+		text,
+		code,
+		title,
+		author,
+		institution,
+		abstract,
+		keywords,
+		contributors
+):
 	# TODO: order of args? or make dict?
 
 	# Add to database

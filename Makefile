@@ -1,4 +1,4 @@
 .PHONY: clean
 
 clean:
-	rm -rf archive db
+	rm -rf archive db meta
