@@ -313,20 +313,22 @@ def open_entry(uid, edit=False):
 	return
 
 
-def cd_to_entry(entry):
-	path = os.path.join(horizon_archive, entry.uid)
+def cd_to_entry(uid):
+	path = os.path.join(horizon_archive, uid)
 
 	if os.path.islink(path):
 		path = os.path.realpath(path)
 		if os.path.isfile(path):
 			os.chdir(os.path.dirname(path))
-			return
 		elif not os.path.exists(path): raise Exception(f"File not found {path}")
 	elif os.path.isfile(path):
 		print(f"cd'ing to the horizon archive is not meaningful, aborting")
 		return
 
-	if os.path.isdir(path): os.chdir(path)
+	if os.path.isdir(path):
+		os.chdir(path)
+
+	subprocess.run("bash")
 
 	return
 
