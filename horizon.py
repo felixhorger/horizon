@@ -47,6 +47,19 @@ from meta import *
 # TODO: for data: one entry per dataset, because they share a description.
 # Add the possibility to not to load the data files, but they can be downloaded via a link
 
+# Markdown: f=`mktemp` && pandoc test.md --mathml > $f && firefox $f && rm $f
+
+# TODO: automatic determination of entry fields can overwrite user input, for example title in text files.
+# No idea how to deal with it, either improve the meta-update function, and only present those fields the user can
+# change, and maybe also add a "protected" field which prevents automatic overwriting
+
+
+#1) view: ENTER
+#2) delete: BACKSPACE?
+#3) cd: SPACE
+#4) edit meta: TAB
+
+
 
 
 # TODO: should I save UID in here (redundancy bc file name!)
@@ -56,17 +69,13 @@ class Entry:
 		title,
 		Type, # uppercase not to overwrite type()
 		filestats,
-		edit_cmd="echo No command to edit entry provided",
-		view_cmd="echo No command to view entry provided",
-		editme=None,
-		viewme=None,
+		cmd="echo No command to view entry provided",
+		readme=None,
 		private=True,
 		codefiles=[],
 		preview=None,
 		name = "",
 		ext = "",
-		text = "",
-		code = "",
 		author = "",
 		institution = "",
 		abstract = "",
@@ -76,17 +85,13 @@ class Entry:
 		self.title = title
 		self.Type = Type
 		self.filestats = filestats
-		self.edit_cmd = edit_cmd
-		self.view_cmd = view_cmd
-		self.editme = editme
-		self.viewme = viewme
+		self.cmd = cmd
+		self.readme = readme
 		self.private = private
 		self.codefiles = codefiles
 		self.preview = preview
 		self.name = name
 		self.ext = ext
-		self.text = text
-		self.code = code
 		self.author = author
 		self.institution = institution
 		self.abstract = abstract
@@ -100,8 +105,7 @@ class Entry:
 			f"Horizon Entry:\n"
 			f"\tTitle:\t\t\"{self.title}\"\n"
 			f"\tType:\t\t{self.Type}\n"
-			f"\tEdit CMD:\t\t\"{self.edit_cmd}\"\n"
-			f"\tView CMD:\t\t\"{self.view_cmd}\"\n"
+			f"\tCMD:\t\t\"{self.cmd}\"\n"
 			f"\tPrivate:\t{self.private}\n"
 			f"\tData:\t\t{self.datafiles}\n"
 			f"\tPreview:\t{None if self.preview is None else repr(self.preview[:32])}\n",
@@ -111,6 +115,7 @@ class Entry:
 
 
 # TODO: should make it so that files are only moved once everything is settled. Maybe even let the user create new files in /tmp, so that they can be deleted, and the horizon archive is not corrupted
+# TODO: needs refactoring, quite long
 def add_entry(db, path, move, directory):
 	# TODO: need a mechanism that prints the file path in case of an error, the user can save it
 
@@ -148,13 +153,13 @@ def add_entry(db, path, move, directory):
 	# Create file or directory
 	if not directory and (path is None or os.path.isfile(path)): # is file?
 		# Is a file
-		edit_cmd, view_cmd, entrytype, ext = interpret_mime(filename)
+		cmd, entrytype, ext = interpret_mime(filename)
 		if path is None:
-			subprocess.run([*shlex.split(edit_cmd), new_path])
+			subprocess.run([*shlex.split(cmd), new_path])
 			if not os.path.isfile(new_path): return
 	else:
 		# Is a directory
-		edit_cmd, view_cmd, entrytype, ext = "echo No command specified for directory: ", "echo No command specified for directory: ", "unknown", ""
+		cmd, entrytype, ext = "echo No command specified for directory: ", "unknown", ""
 		if directory: os.makedirs(new_path)
 
 
@@ -188,7 +193,7 @@ def add_entry(db, path, move, directory):
 
 
 	# Get info for database
-	author = pubkey["uids"][0].lower() # TODO: why is uids a list? and why uidS and not uid
+	author = pubkey["uids"][0] # TODO: why is uids a list? and why uidS and not uid
 	institution = ""
 	abstract = ""
 	keywords = ""
@@ -218,25 +223,20 @@ def add_entry(db, path, move, directory):
 	# Create entry for meta info
 	if   entrytype == "text" or entrytype == "code": preview = None
 	else:                                            preview = ""   # This needs to be set by the user manually for e.g. PDF files
-	editme = None
-	viewme = None
+	readme = None
 	private = True
 	codefiles = []
 	entry = Entry(
 		title,
 		entrytype,
 		get_filestats(new_path),
-		edit_cmd,
-		view_cmd,
-		editme,
-		viewme,
+		cmd,
+		readme,
 		private,
 		codefiles,
 		preview,
 		name,
 		ext,
-		text,
-		code,
 		author,
 		institution,
 		abstract,
@@ -248,26 +248,52 @@ def add_entry(db, path, move, directory):
 
 	return
 
-def update_entry(db, uid, entry):
-	add_document(
-		db,
-		uid,
-		entry.name,
-		entry.ext,
-		entry.Type,
-		entry.text,
-		entry.code,
-		entry.title,
-		entry.author,
-		entry.institution,
-		entry.abstract,
-		entry.keywords,
-		entry.contributors
-	)
 
-	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
+def update_entry(db, uid):
+
+	entry = meta[uid]
+
+	path = os.path.realpath(os.path.join(horizon_archive, uid)) # Resolves symlinks
+
+	if os.path.isdir(path):
+		print("Warning: tried to update directory entry, not implemented yet")
+		# use the entry.readme, but check it first
+		#filename = entry.readme
+		#filename = os.path.join(uid, filename) if filename is not None else uid
+		return
+	else:
+		is_text = entry.Type == "text"
+		is_code = entry.Type == "code"
+		text = ""
+		code = ""
+		if is_text or is_code:
+			filecontent = read_text_file(path)
+			if is_text:
+				text = filecontent
+				entry.title = get_title_from_text(text)
+			elif is_code: code = filecontent
+		else:
+			raise Exception("Not implemented, need to do for PDF at least")
+		
+		add_document(
+			db,
+			uid,
+			entry.name,
+			entry.ext,
+			entry.Type,
+			text,
+			code,
+			entry.title,
+			entry.author,
+			entry.institution,
+			entry.abstract,
+			entry.keywords,
+			entry.contributors
+		)
+
+		write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
+
 	return
-	
 
 
 def delete_entry(db, uid):
@@ -282,33 +308,37 @@ def delete_entry(db, uid):
 	return
 
 
-def open_entry(uid, edit=False):
+def edit_entry_meta(db, uid):
 
-	# Open (can be just viewing, or edit)
 	entry = meta[uid]
 
-	filename = entry.editme if edit else entry.viewme
-	filename = os.path.join(uid, filename) if filename is not None else uid
-	path = os.path.realpath(os.path.join(horizon_archive, filename))
-	subprocess.run([*shlex.split(entry.edit_cmd if edit else entry.view_cmd), path])
+	yml = os.path.join(horizon_meta, uid + ".yml")
+	subprocess.run(["vim", yml])
+	meta[uid] = read_yaml(yml, Entry)
+
+	update_entry(db, uid)
+
+	return
+
+
+def open_entry(db, uid):
+
+	entry = meta[uid]
+
+	if len(entry.cmd) == 0: raise Exception("No command to view entry was provided")
+
+	path = os.path.realpath(os.path.join(horizon_archive, uid))
+	if os.path.isdir(path):
+		if entry.readme is None: raise Exception("Entry is a directory but no readme file was provided")
+		path = os.path.join(path, entry.readme)
+	subprocess.run([*shlex.split(entry.cmd), path])
 
 	# Check if need to update database
 	new_filestats = get_filestats(path)
 	if file_did_not_change(entry.filestats, new_filestats): return
 	entry.filestats = new_filestats
 
-	is_text = entry.Type == "text"
-	is_code = entry.Type == "code"
-	if is_text or is_code:
-		with open(path, "r") as f:
-			text = f.read()
-		if is_text or entry.viewme is not None: entry.text = text
-		elif is_code: entry.code = text
-		entry.title = get_title_from_text(text)
-	else:
-		raise Exception("Not implemented, need to do for PDF")
-	
-	update_entry(db, uid, entry)
+	update_entry(db, uid)
 
 	return
 
@@ -322,7 +352,6 @@ def cd_to_entry(uid):
 			os.chdir(os.path.dirname(path))
 		elif not os.path.exists(path): raise Exception(f"File not found {path}")
 	elif os.path.isfile(path):
-		print(f"cd'ing to the horizon archive is not meaningful, aborting")
 		return
 
 	if os.path.isdir(path):
@@ -346,7 +375,9 @@ def find_entries(db, query):
 		terminal_menu = stm.TerminalMenu(
 			[
 				#f"[{get_alphabet(i)}] " + # TODO: this could be used for shortcuts
-				(meta[uid].title if len(meta[uid].title) else "Unknown") +
+				(meta[uid].title if len(meta[uid].title) else "Unknown") + " (" +
+				" ".join(meta[uid].author.split()[:2]) + ") " +
+				("[dir]" if meta[uid].filestats["md5"] is None else "[file]") + # TODO: dodgy
 				"|" +
 				(uid if meta[uid].preview is None or len(meta[uid].preview) else "")
 				for i, uid in enumerate(entries)
@@ -360,7 +391,8 @@ def find_entries(db, query):
 			#status_bar_below_preview=False,
 			preview_command=(
 				lambda uid: (
-					uid,
+					# TODO: improve this by creating a list beforehand, same for entries above
+					os.path.realpath(os.path.join(horizon_archive, uid)) if os.path.islink(os.path.join(horizon_archive, uid)) else uid,
 					meta[uid].preview
 					if meta[uid].preview is not None
 					else read_text_file(os.path.join(horizon_archive, uid)) # TODO: this might be slow for large files, but do they get so large?
@@ -376,16 +408,14 @@ def find_entries(db, query):
 
 		key = terminal_menu.chosen_accept_key
 		uid = entries[selection]
-		if key == "tab":
+		if key == "enter": # view
+			open_entry(db, uid)
+		elif key == "backspace": # edit
+			print(f"deleting {uid}, but not implemented")
+		elif key == "tab": # meta
+			edit_entry_meta(db, uid)
+		elif key == "space": # cd
 			cd_to_entry(uid)
-			break
-		elif key == "backspace":
-			open_entry(uid, edit=True)
-			break
-		else:
-			open_entry(uid)
-			if   key == "enter": break
-			elif key == "space": continue
 
 	return
 
@@ -460,7 +490,7 @@ try:
 	if   args.cmd == "add":    add_entry(db, args.path, args.move, args.dir)
 	elif args.cmd == "delete": delete_entry(db, args.entries)
 	elif args.cmd == "find":   find_entries(db, args.query)
-	elif args.cmd == "open":   open_entry(args.entry)
+	elif args.cmd == "open":   open_entry(db, args.entry)
 finally:
 	db.close()
 
