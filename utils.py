@@ -19,16 +19,18 @@ def interpret_mime(filename): # Only takes files
 		mime, encoding = result.stdout.split("; charset=")
 		isbinary = True if encoding == "binary" else False
 	else:
-		if len(ext) == 0: return "vim", "text", ext
+		if len(ext) == 0: return "vim", "vim", "text", ext
 		mime = mimetypes.guess_type(filename, strict=False)[0]
-		if mime is None: return f"echo Don't know how to open (MIME {mime}):", "data", ext
+		cmd = f"echo Don't know how to open (MIME {mime}):"
+		if mime is None: return cmd, cmd, "data", ext
 		isbinary = False
 
 	category, subtype = mime.split("/")
 
 	# Infer entrytype and cmd
 	if category == "text":
-		cmd = "vim"
+		edit_cmd = "vim"
+		view_cmd = "vim"
 		if subtype == "plain":
 			if len(ext) == 0 or ext == "txt": entrytype = "text"
 			else:                             entrytype = "code"
@@ -36,20 +38,24 @@ def interpret_mime(filename): # Only takes files
 		else:                     entrytype = "code"
 	elif category == "application":
 		if subtype == "pdf":
-			cmd = "evince"
+			edit_cmd = "echo No command specified to edit this file:"
+			view_cmd = "evince"
 			entrytype = "text"
 		elif subtype == "csv" and not isbinary:
-			cmd = "vim"
+			edit_cmd = "vim"
+			view_cmd = "vim"
 			entrytype = "data"
 		else:
 			if isbinary:
-				cmd = "echo No command specified to open this file:"
+				edit_cmd = "echo No command specified to edit this file:"
+				view_cmd = "echo No command specified to view this file:"
 				entrytype = "data"
 			else:
-				cmd = "vim"
+				edit_cmd = "vim"
+				view_cmd = "vim"
 				entrytype = "code"
 
-	return cmd, entrytype, ext
+	return edit_cmd, view_cmd, entrytype, ext
 
 
 def read_text_file(path):

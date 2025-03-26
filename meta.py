@@ -25,7 +25,7 @@ def get_filestats(path):
 	d = {}
 	d["mtime"] = os.path.getmtime(path)
 	d["size"] = os.path.getsize(path)
-	d["md5"] = md5sum(path)
+	d["md5"] = md5sum(path) if os.path.isfile(path) else None
 	return d
 
 def file_did_not_change(a, b):

@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import shlex
 import simple_term_menu as stm
 import argparse
 import random
@@ -55,8 +56,10 @@ class Entry:
 		title,
 		Type, # uppercase not to overwrite type()
 		filestats,
-		cmd="echo No command to open entry provided",
-		readme="", # Has to be provided if entry is dictionary, otherwise no file can be opened TODO: could make this a list, too? in case there are files whose text should be indexed
+		edit_cmd="echo No command to edit entry provided",
+		view_cmd="echo No command to view entry provided",
+		editme=None,
+		viewme=None,
 		private=True,
 		codefiles=[],
 		preview=None,
@@ -73,8 +76,10 @@ class Entry:
 		self.title = title
 		self.Type = Type
 		self.filestats = filestats
-		self.cmd = cmd
-		self.readme = readme
+		self.edit_cmd = edit_cmd
+		self.view_cmd = view_cmd
+		self.editme = editme
+		self.viewme = viewme
 		self.private = private
 		self.codefiles = codefiles
 		self.preview = preview
@@ -90,11 +95,13 @@ class Entry:
 		return
 
 	def __repr__(self):
+		# TODO: DONT DELETE THIS, CAN BE USED TO INITIALISE vim if an entry is to be edited!
 		return (
 			f"Horizon Entry:\n"
 			f"\tTitle:\t\t\"{self.title}\"\n"
 			f"\tType:\t\t{self.Type}\n"
-			f"\tCMD:\t\t\"{self.cmd}\"\n"
+			f"\tEdit CMD:\t\t\"{self.edit_cmd}\"\n"
+			f"\tView CMD:\t\t\"{self.view_cmd}\"\n"
 			f"\tPrivate:\t{self.private}\n"
 			f"\tData:\t\t{self.datafiles}\n"
 			f"\tPreview:\t{None if self.preview is None else repr(self.preview[:32])}\n",
@@ -141,13 +148,13 @@ def add_entry(db, path, move, directory):
 	# Create file or directory
 	if not directory and (path is None or os.path.isfile(path)): # is file?
 		# Is a file
-		cmd, entrytype, ext = interpret_mime(filename)
+		edit_cmd, view_cmd, entrytype, ext = interpret_mime(filename)
 		if path is None:
-			subprocess.run([cmd, new_path])
+			subprocess.run([*shlex.split(edit_cmd), new_path])
 			if not os.path.isfile(new_path): return
 	else:
 		# Is a directory
-		cmd, entrytype, ext = "cd", "unknown", ""
+		edit_cmd, view_cmd, entrytype, ext = "echo No command specified for directory: ", "echo No command specified for directory: ", "unknown", ""
 		if directory: os.makedirs(new_path)
 
 
@@ -211,15 +218,18 @@ def add_entry(db, path, move, directory):
 	# Create entry for meta info
 	if   entrytype == "text" or entrytype == "code": preview = None
 	else:                                            preview = ""   # This needs to be set by the user manually for e.g. PDF files
-	readme = ""
+	editme = None
+	viewme = None
 	private = True
 	codefiles = []
 	entry = Entry(
 		title,
 		entrytype,
 		get_filestats(new_path),
-		cmd,
-		readme,
+		edit_cmd,
+		view_cmd,
+		editme,
+		viewme,
 		private,
 		codefiles,
 		preview,
@@ -272,12 +282,15 @@ def delete_entry(db, uid):
 	return
 
 
-def open_entry(uid):
-	# Open
+def open_entry(uid, edit=False):
+
+	# Open (can be just viewing, or edit)
 	entry = meta[uid]
-	filename = os.path.join(uid, entry.readme) if len(entry.readme) else uid
+
+	filename = entry.editme if edit else entry.viewme
+	filename = os.path.join(uid, filename) if filename is not None else uid
 	path = os.path.realpath(os.path.join(horizon_archive, filename))
-	subprocess.run([entry.cmd, path])
+	subprocess.run([*shlex.split(entry.edit_cmd if edit else entry.view_cmd), path])
 
 	# Check if need to update database
 	new_filestats = get_filestats(path)
@@ -289,9 +302,8 @@ def open_entry(uid):
 	if is_text or is_code:
 		with open(path, "r") as f:
 			text = f.read()
-		if is_text or len(entry.readme): entry.text = text
+		if is_text or entry.viewme is not None: entry.text = text
 		elif is_code: entry.code = text
-		entry.preview = text # TODO
 		entry.title = get_title_from_text(text)
 	else:
 		raise Exception("Not implemented, need to do for PDF")
@@ -302,8 +314,20 @@ def open_entry(uid):
 
 
 def cd_to_entry(entry):
-	print(f"cd to entry {entry}")
-	# TODO: if file, ask twice because otherwise you're in the horizon home folder
+	path = os.path.join(horizon_archive, entry.uid)
+
+	if os.path.islink(path):
+		path = os.path.realpath(path)
+		if os.path.isfile(path):
+			os.chdir(os.path.dirname(path))
+			return
+		elif not os.path.exists(path): raise Exception(f"File not found {path}")
+	elif os.path.isfile(path):
+		print(f"cd'ing to the horizon archive is not meaningful, aborting")
+		return
+
+	if os.path.isdir(path): os.chdir(path)
+
 	return
 
 
@@ -319,14 +343,14 @@ def find_entries(db, query):
 	while True:
 		terminal_menu = stm.TerminalMenu(
 			[
-				#f"[{get_alphabet(i)}] " +
+				#f"[{get_alphabet(i)}] " + # TODO: this could be used for shortcuts
 				(meta[uid].title if len(meta[uid].title) else "Unknown") +
 				"|" +
 				(uid if meta[uid].preview is None or len(meta[uid].preview) else "")
 				for i, uid in enumerate(entries)
 			],
 			cursor_index=selection,
-			accept_keys=("enter", "backspace", "tab"),
+			accept_keys=("enter", "space", "backspace", "tab"),
 			title=f"Search results for \"{''.join(query)}\"",
 			title_style=("fg_green", "underline", "italics"),
 			status_bar="", # TODO: Could be used to display some other info, can be function with selection as arg
@@ -353,10 +377,13 @@ def find_entries(db, query):
 		if key == "tab":
 			cd_to_entry(uid)
 			break
-		else: 
+		elif key == "backspace":
+			open_entry(uid, edit=True)
+			break
+		else:
 			open_entry(uid)
-			if   key == "enter":     break
-			elif key == "backspace": continue
+			if   key == "enter": break
+			elif key == "space": continue
 
 	return
 
