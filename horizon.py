@@ -53,6 +53,7 @@ from meta import *
 # No idea how to deal with it, either improve the meta-update function, and only present those fields the user can
 # change, and maybe also add a "protected" field which prevents automatic overwriting
 
+# TODO: program status bar to show errors like "command not specificied"
 
 #1) view: ENTER
 #2) delete: BACKSPACE?
@@ -74,6 +75,7 @@ class Entry:
 		private=True,
 		codefiles=[],
 		preview=None,
+		preview_file=None,
 		name = "",
 		ext = "",
 		author = "",
@@ -90,6 +92,7 @@ class Entry:
 		self.private = private
 		self.codefiles = codefiles
 		self.preview = preview
+		self.preview_file = preview_file
 		self.name = name
 		self.ext = ext
 		self.author = author
@@ -221,8 +224,10 @@ def add_entry(db, path, move, directory):
 	)
 
 	# Create entry for meta info
-	if   entrytype == "text" or entrytype == "code": preview = None
-	else:                                            preview = ""   # This needs to be set by the user manually for e.g. PDF files
+	# TODO: this fails if it's a directory. Currently it can't be.
+	if entrytype in ("text", "code"): preview_file = uid
+	else:                             preview_file = None
+	preview = None
 	readme = None
 	private = True
 	codefiles = []
@@ -235,6 +240,7 @@ def add_entry(db, path, move, directory):
 		private,
 		codefiles,
 		preview,
+		preview_file,
 		name,
 		ext,
 		author,
@@ -377,9 +383,9 @@ def find_entries(db, query):
 				#f"[{get_alphabet(i)}] " + # TODO: this could be used for shortcuts
 				(meta[uid].title if len(meta[uid].title) else "Unknown") + " (" +
 				" ".join(meta[uid].author.split()[:2]) + ") " +
-				("[dir]" if meta[uid].filestats["md5"] is None else "[file]") + # TODO: dodgy
+				("[dir]" if os.path.isdir(os.path.realpath(os.path.join(horizon_archive, uid))) else "[file]") +
 				"|" +
-				(uid if meta[uid].preview is None or len(meta[uid].preview) else "")
+				("" if meta[uid].preview is None and meta[uid].preview_file is None else uid)
 				for i, uid in enumerate(entries)
 			],
 			cursor_index=selection,
@@ -393,9 +399,22 @@ def find_entries(db, query):
 				lambda uid: (
 					# TODO: improve this by creating a list beforehand, same for entries above
 					os.path.realpath(os.path.join(horizon_archive, uid)) if os.path.islink(os.path.join(horizon_archive, uid)) else uid,
-					meta[uid].preview
-					if meta[uid].preview is not None
-					else read_text_file(os.path.join(horizon_archive, uid)) # TODO: this might be slow for large files, but do they get so large?
+					meta[uid].preview if meta[uid].preview is not None
+					else (
+						"" if meta[uid].preview_file is None
+						else
+						read_text_file(
+							os.path.join(
+								horizon_archive,
+								(
+									os.path.join(uid, meta[uid].preview_file)
+									if os.path.isdir(os.path.realpath(os.path.join(horizon_archive, uid)))
+									else meta[uid].preview_file
+								)
+							)
+						)
+						# TODO: this might be slow for large files, but do they get so large?
+					)
 				)
 			),
 			preview_title_style=("fg_yellow",),
