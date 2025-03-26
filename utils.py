@@ -57,7 +57,6 @@ def read_text_file(path):
 		text = f.read()
 	return text
 
-
 def get_title_from_text(text):
 	# Find first non-empty line
 	i = 0

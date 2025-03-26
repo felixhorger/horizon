@@ -19,6 +19,8 @@ from meta import *
 
 # TODO: the preview of text files should not be saved in yml, it can be read from file on the fly
 
+# TODO: add command to update database entry, maybe just a key in TermMenu
+
 
 # TODO: for updating code repos, which are stored outside of horizon, and have a different name, it would be good to have a list of real paths in horizon, so that the user can do `horizon update .` and it knows which uid this has
 # TODO: yaml file with config for e.g. gnupg path or pubkey name and editor/viewer etc
@@ -57,7 +59,7 @@ class Entry:
 		readme="", # Has to be provided if entry is dictionary, otherwise no file can be opened TODO: could make this a list, too? in case there are files whose text should be indexed
 		private=True,
 		codefiles=[],
-		preview="",
+		preview=None,
 		name = "",
 		ext = "",
 		text = "",
@@ -95,7 +97,7 @@ class Entry:
 			f"\tCMD:\t\t\"{self.cmd}\"\n"
 			f"\tPrivate:\t{self.private}\n"
 			f"\tData:\t\t{self.datafiles}\n"
-			f"\tPreview:\t{repr(self.preview[:32])}\n",
+			f"\tPreview:\t{None if self.preview is None else repr(self.preview[:32])}\n",
 			f"\tStats:\t{self.filestats}\n\n"
 			# TODO the rest
 		)
@@ -207,9 +209,8 @@ def add_entry(db, path, move, directory):
 	)
 
 	# Create entry for meta info
-	preview = ""
-	if   entrytype == "text": preview = text # TODO: this should only be first couple of lines
-	elif entrytype == "code": preview = code
+	if   entrytype == "text" or entrytype == "code": preview = None
+	else:                                            preview = ""   # This needs to be set by the user manually for e.g. PDF files
 	readme = ""
 	private = True
 	codefiles = []
@@ -291,6 +292,7 @@ def open_entry(uid):
 		if is_text or len(entry.readme): entry.text = text
 		elif is_code: entry.code = text
 		entry.preview = text # TODO
+		entry.title = get_title_from_text(text)
 	else:
 		raise Exception("Not implemented, need to do for PDF")
 	
@@ -320,15 +322,27 @@ def find_entries(db, query):
 				#f"[{get_alphabet(i)}] " +
 				(meta[uid].title if len(meta[uid].title) else "Unknown") +
 				"|" +
-				(uid if len(meta[uid].preview) else "")
+				(uid if meta[uid].preview is None or len(meta[uid].preview) else "")
 				for i, uid in enumerate(entries)
 			],
 			cursor_index=selection,
 			accept_keys=("enter", "backspace", "tab"),
-			preview_command=lambda uid: (f"\033[33m{uid}\033[0m", meta[uid].preview),
-			#preview_command="cat archive/{}",
-			preview_size=0.4,
-			preview_title="Preview"
+			title=f"Search results for \"{''.join(query)}\"",
+			title_style=("fg_green", "underline", "italics"),
+			status_bar="", # TODO: Could be used to display some other info, can be function with selection as arg
+			status_bar_style=("bg_black",),
+			#status_bar_below_preview=False,
+			preview_command=(
+				lambda uid: (
+					uid,
+					meta[uid].preview
+					if meta[uid].preview is not None
+					else read_text_file(os.path.join(horizon_archive, uid)) # TODO: this might be slow for large files, but do they get so large?
+				)
+			),
+			preview_title_style=("fg_yellow",),
+			#preview_size=0.5, # Not needed, preview uses the available space
+			clear_screen=True
 		)
 		selection = terminal_menu.show()
 
