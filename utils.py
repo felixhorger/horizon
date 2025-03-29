@@ -22,7 +22,7 @@ def interpret_mime(filename): # Only takes files
 	else:
 		if len(ext) == 0: return "vim", "text", ext
 		mime = mimetypes.guess_type(filename, strict=False)[0]
-		cmd = f"echo Don't know how to open (MIME {mime}):"
+		cmd = None
 		if mime is None: return cmd, "data", ext
 		isbinary = False
 
@@ -45,7 +45,7 @@ def interpret_mime(filename): # Only takes files
 			entrytype = "data"
 		else:
 			if isbinary:
-				cmd = "echo No command specified to view this file:"
+				cmd = None
 				entrytype = "data"
 			else:
 				cmd = "vim"
@@ -79,40 +79,4 @@ def html2text(html):
 	h = HTML2Text.HTML2Text()
 	h.ignore_links = True
 	return h.handle(html)
-
-def get_preview(path, entry):
-	if entry.preview is not None: return entry.preview
-
-	if os.path.isdir(path):
-		if entry.readme is None: return "No preview provided for this directory, set the readme field"
-		path = os.path.join(path, entry.readme)
-
-	_, ext = os.path.splitext(path)
-	ext = ext.lower()
-	if len(ext): ext = ext[1:]
-
-	# TODO: this code repeats three times in horizon.py ... should go into separate function
-	if entry.Type == "code":
-		preview = read_text_file(path)
-	elif entry.Type == "text":
-		if ext == "pdf":
-			_, preview = pdf2text(path)
-		elif ext == "txt" or len(ext) == 0:
-			preview = read_text_file(path) # TODO: this might be slow for large files, but do they get so large?
-		elif ext == "html":
-			html = read_text_file(path)
-			preview = html2text(html)
-		elif ext == "md":
-			preview = read_text_file(path)
-		else:
-			raise Exception(f"Not implemented, unknown file extension {ext}")
-	else:
-		# TODO: should not happen -> error
-		preview = "Could not determine preview"
-
-	return preview
-
-
-
-
 

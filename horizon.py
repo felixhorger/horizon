@@ -61,6 +61,8 @@ from meta import *
 
 # TODO: generate text/code from preview file
 
+# TODO: think about removing the entry type, and just using a dictionary,
+
 
 
 #1) view: ENTER
@@ -72,22 +74,23 @@ from meta import *
 class Entry:
 	def __init__(
 		self,
-		title,
-		Type, # uppercase not to overwrite type()
-		filestats,
-		cmd="echo No command to view entry provided",
+		name=None,
+		ext=None, # Not the extension of the readme file, but the extension related to this entry, e.g. a julia code repo would use jl
+		filestats=None,
+		cmd=None,
 		readme=None,
-		private=True,
-		codefiles=[],
 		preview=None,
-		name = "",
-		ext = "",
-		author = "",
-		institution = "",
-		abstract = "",
-		keywords = "",
-		contributors = ""
+		codefiles=None,
+		Type=None, # uppercase not to overwrite type()
+		title=None,
+		author=None,
+		institution=None,
+		abstract=None,
+		keywords=None,
+		contributors=None,
+		private=True
 	):
+		# TODO: sort below
 		self.title = title
 		self.Type = Type
 		self.filestats = filestats
@@ -169,7 +172,7 @@ def add_entry(path, move, directory):
 			if not os.path.isfile(new_path): return
 	else:
 		# Is a directory
-		cmd, entrytype, ext = "echo No command specified for directory: ", "text", ""
+		cmd, entrytype, ext = None, "text", "" # TODO: what is a good default value here?
 		if directory: os.makedirs(new_path)
 
 
@@ -186,6 +189,7 @@ def add_entry(path, move, directory):
 	title = ""
 	code = ""
 	text = ""
+	# TODO: the below code has overlap with get_title_text_code(), need to refactor
 	if os.path.isdir(new_path):
 		if path is not None: print("TODO: Not implemented, need to ask user what file readme is etc, entry still added")
 		text = ""
@@ -209,14 +213,10 @@ def add_entry(path, move, directory):
 
 	# Get info for database
 	author = pubkey["uids"][0] # TODO: why is uids a list? and why uidS and not uid
-	institution = ""
+	institution = "" # TODO: could guess these if pdf or textfile?
 	abstract = ""
 	keywords = ""
 	contributors = ""
-
-	# TODO: make dict of all the meta data, to make the below two function calls prettier
-	# TODO: think about removing the entry type, and just using a dictionary,
-	# could be nice to keep class bc of defaults and repr for printing?
 
 	# Add to database
 	db = open_database("db")
@@ -234,30 +234,29 @@ def add_entry(path, move, directory):
 		abstract,
 		keywords,
 		contributors
+		# Note: Put title found in entry here, but not in the meta data (where None is put).
+		# If the user sets the title in the meta data, horizon will know it has to use that
+		# and not the automatically found one. Same for the below attributes
 	)
 	db.close()
 
 	# Create entry for meta info
-	preview = None
-	readme = None
-	private = True
-	codefiles = []
 	entry = Entry(
-		title,
-		entrytype,
-		get_filestats(new_path),
-		cmd,
-		readme,
-		private,
-		codefiles,
-		preview,
 		name,
 		ext,
-		author,
-		institution,
-		abstract,
-		keywords,
-		contributors
+		get_filestats(new_path),
+		cmd,
+		readme=None,
+		preview=None,
+		codefiles=None,
+		Type=entrytype,
+		title=None, # See above comment why it's None here
+		author=author,
+		institution="",
+		abstract="",
+		keywords="",
+		contributors="",
+		private=True
 	)
 
 	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
@@ -265,59 +264,84 @@ def add_entry(path, move, directory):
 	return
 
 
-def update_entry(uid, entry):
+
+# Returns title, text, code
+def get_title_text_code(uid, entry):
 
 	path = os.path.realpath(os.path.join(horizon_archive, uid)) # Resolves symlinks
 
 	if os.path.isdir(path):
 
 		filename = entry.readme
-		if filename is None: raise Exception(f"No readme provided for directory {uid}")
+
+		code = ""
+		if entry.Type == "code": code = "" # TODO: read codefiles
+
+		# Is there a readme with text in this dir?
+		if filename is None:
+			# No
+			title = entry.name
+			text = ""
+			return title, text, code
+
+		# Yes, there is a readme, get contents based on file extension
 		_, ext = os.path.splitext(filename)
 		ext = ext.lower() # TODO: is this done everywhere?
 		if len(ext): ext = ext[1:]
 		filename = os.path.join(path, filename)
 
-		if entry.Type == "code":
-			code = read_text_file(filename)
-			text = ""
-		elif entry.Type == "text":
-			if ext == "pdf":
-				entry.title, text = pdf2text(filename)
-				code = "TODO read tex files if there" # TODO: check for tex, maybe add option for this
-			elif ext == "txt" or len(ext) == 0:
-				text = read_text_file(filename)
-				entry.title = get_title_from_text(text)
-				code = ""
-			elif ext == "html":
-				html = read_text_file(filename)
-				text = html2text(html)
-				entry.title = get_title_from_text(text)
-				code = ""
-			elif ext == "md":
-				code = read_text_file(filename)
-				text = code
-			else:
-				raise Exception(f"Not implemented, unknown file extension {ext}")
+		if ext == "pdf": # extension of readme file
+			title, text = pdf2text(filename)
+		elif ext == "txt" or len(ext) == 0:
+			text = read_text_file(filename)
+			title = get_title_from_text(text)
+		elif ext == "html":
+			html = read_text_file(filename)
+			text = html2text(html)
+			title = get_title_from_text(text)
+		elif ext == "md":
+			# Note: actually a markdown file should not be put as readme. Better is the rendered html
+			text = read_text_file(filename)
+			print("Warning: you should not put a markdown file as a readme, but the rendered html (e.g. with pandoc)")
 		else:
-			# TODO: should not happen -> error
-			text = ""
-			code = ""
+			raise Exception(f"Not implemented, unknown file extension {ext}")
 
-	else:
+	elif os.path.isfile(path):
+
 		is_text = entry.Type == "text"
 		is_code = entry.Type == "code"
 		text = ""
 		code = ""
+		title = "Unknown"
 		if is_text or is_code:
 			filecontent = read_text_file(path)
 			if is_text:
 				text = filecontent
-				entry.title = get_title_from_text(text)
+				title = get_title_from_text(text)
 			elif is_code: code = filecontent
 		else:
 			raise Exception("Not implemented, need to do for PDF at least")
-		
+	else:
+		raise FileNotFoundError(f"Could not find entry's file {path}")
+
+
+	# Not entry wasn't updated
+	#write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
+
+	return title, text, code
+
+
+
+
+def update_entry(uid, entry):
+
+	title, text, code = get_title_text_code(uid, entry)
+
+	author       = entry.author
+	institution  = entry.institution
+	abstract     = entry.abstract
+	keywords     = entry.keywords
+	contributors = entry.contributors
 
 	db = open_database("db") # TODO: think about putting this in add_document? less modular, but if it's always used like this it'll make sense to put together
 	add_document(
@@ -328,16 +352,14 @@ def update_entry(uid, entry):
 		entry.Type,
 		text,
 		code,
-		entry.title,
-		entry.author,
-		entry.institution,
-		entry.abstract,
-		entry.keywords,
-		entry.contributors
+		title,
+		"" if author       is None else author,
+		"" if institution  is None else institution,
+		"" if abstract     is None else abstract,
+		"" if keywords     is None else keywords,
+		"" if contributors is None else contributors
 	)
 	db.close()
-
-	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
 
 	return
 
@@ -372,12 +394,13 @@ def open_entry(uid):
 
 	entry = meta[uid] # TODO: also only read the specific uid entry
 
-	if len(entry.cmd) == 0: raise Exception("No command to view entry was provided")
+	if entry.cmd is None: raise Exception("No command to view entry was provided")
 
 	path = os.path.realpath(os.path.join(horizon_archive, uid))
 	if os.path.isdir(path):
 		if entry.readme is None: raise Exception("Entry is a directory but no readme file was provided")
 		path = os.path.join(path, entry.readme)
+
 	subprocess.run([*shlex.split(entry.cmd), path])
 
 	# Check if need to update database
@@ -437,15 +460,51 @@ def find_entries(query):
 
 		meta = read_meta(horizon_meta, Entry) # TODO: only read the required ones
 
+		# Assemble info for the terminal menu
+		titles = []
+		authors = []
+		texts = []
+		codes = []
+		isfile = []
+		preview_titles = []
+		previews = []
+
+		for uid in entries:
+			entry = meta[uid]
+			authors.append(" ".join(entry.author.split()[:2]))
+
+			title, text, code = get_title_text_code(uid, entry)
+			if entry.title is not None: title = entry.title
+			titles.append(title)
+			texts.append(text)
+			codes.append(code)
+
+			path = os.path.join(horizon_archive, uid)
+			realpath = os.path.realpath(path)
+			preview_titles.append(realpath if os.path.islink(path) else uid)
+			path = realpath
+
+			if not os.path.exists(path): raise FileNotFoundError(f"Could not find entry at {path}")
+
+			isfile.append(os.path.isfile(path))
+
+			# If is text entry, or is a directory with a readme
+			if (
+			(entry.Type == "text" and len(text)) or
+			(not isfile[-1] and len(text))):
+				previews.append(text)
+			elif len(code): previews.append(code)
+			else: previews.append("Could not generate a preview automatically")
+
+
 		terminal_menu = stm.TerminalMenu(
 			[
 				# TODO: improve this by creating a list beforehand, same for entries above
 				#f"[{get_alphabet(i)}] " + # TODO: this could be used for shortcuts
-				(meta[uid].title if len(meta[uid].title) else "Unknown") + " (" +
-				" ".join(meta[uid].author.split()[:2]) + ") " +
-				("[dir]" if os.path.isdir(os.path.realpath(os.path.join(horizon_archive, uid))) else "[file]") +
-				"|" + uid
-				for i, uid in enumerate(entries)
+				title + " (" + author + ") " +
+				("[file]" if isafile else "[dir]") +
+				f"|{i}"
+				for (i, (title, author, isafile)) in enumerate(zip(titles, authors, isfile))
 			],
 			cursor_index=selection,
 			accept_keys=("enter", "space", "backspace", "tab"),
@@ -454,14 +513,7 @@ def find_entries(query):
 			status_bar="", # TODO: Could be used to display some other info, can be function with selection as arg
 			status_bar_style=("bg_black",),
 			#status_bar_below_preview=False,
-			preview_command=lambda uid: (
-				(
-					os.path.realpath(os.path.join(horizon_archive, uid))
-					if os.path.islink(os.path.join(horizon_archive, uid))
-					else uid
-				),
-				get_preview(os.path.realpath(os.path.join(horizon_archive, uid)), meta[uid])
-			),
+			preview_command=lambda i: (preview_titles[int(i)], previews[int(i)]),
 			preview_title_style=("fg_yellow",),
 			#preview_size=0.5, # Not needed, preview uses the available space
 			#clear_screen=True
