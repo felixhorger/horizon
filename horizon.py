@@ -13,6 +13,10 @@ from utils import *
 from meta import *
 
 
+# Multiple instances of horizon can be run in parallel, but it is assumed that the user interacts sequentially,
+# i.e. multiple updates to the database are not requested simultaneously
+
+
 # TODO: most important is triggering an update to the database entry if file is changed and offering mechanism to do it manually
 
 
@@ -55,15 +59,16 @@ from meta import *
 
 # TODO: program status bar to show errors like "command not specificied"
 
+# TODO: generate text/code from preview file
+
+
+
 #1) view: ENTER
 #2) delete: BACKSPACE?
 #3) cd: SPACE
 #4) edit meta: TAB
 
 
-
-
-# TODO: should I save UID in here (redundancy bc file name!)
 class Entry:
 	def __init__(
 		self,
@@ -75,7 +80,6 @@ class Entry:
 		private=True,
 		codefiles=[],
 		preview=None,
-		preview_file=None,
 		name = "",
 		ext = "",
 		author = "",
@@ -92,7 +96,6 @@ class Entry:
 		self.private = private
 		self.codefiles = codefiles
 		self.preview = preview
-		self.preview_file = preview_file
 		self.name = name
 		self.ext = ext
 		self.author = author
@@ -117,9 +120,11 @@ class Entry:
 		)
 
 
+PUBKEY = "Felix" # TODO, how? need horizon config
+
 # TODO: should make it so that files are only moved once everything is settled. Maybe even let the user create new files in /tmp, so that they can be deleted, and the horizon archive is not corrupted
 # TODO: needs refactoring, quite long
-def add_entry(db, path, move, directory):
+def add_entry(path, move, directory):
 	# TODO: need a mechanism that prints the file path in case of an error, the user can save it
 
 	print(f"Adding entry {path}")
@@ -138,7 +143,9 @@ def add_entry(db, path, move, directory):
 
 
 	# Generate new UID
-	fingerprint = get_pubkey(gpg, pubkey)["fingerprint"]
+	gpg = open_gpg()
+	pubkey = get_pubkey(gpg, PUBKEY)
+	fingerprint = pubkey["fingerprint"]
 	prefix = (name + "_" if len(name) else "") + fingerprint
 
 	# Generate a new path for within the horizon archive
@@ -162,7 +169,7 @@ def add_entry(db, path, move, directory):
 			if not os.path.isfile(new_path): return
 	else:
 		# Is a directory
-		cmd, entrytype, ext = "echo No command specified for directory: ", "unknown", ""
+		cmd, entrytype, ext = "echo No command specified for directory: ", "text", ""
 		if directory: os.makedirs(new_path)
 
 
@@ -179,7 +186,12 @@ def add_entry(db, path, move, directory):
 	title = ""
 	code = ""
 	text = ""
-	if   entrytype == "code":
+	if os.path.isdir(new_path):
+		if path is not None: print("TODO: Not implemented, need to ask user what file readme is etc, entry still added")
+		text = ""
+		title = name
+		code = ""
+	elif entrytype == "code":
 		code = read_text_file(new_path)
 		title = name
 	elif entrytype == "text":
@@ -207,6 +219,7 @@ def add_entry(db, path, move, directory):
 	# could be nice to keep class bc of defaults and repr for printing?
 
 	# Add to database
+	db = open_database("db")
 	add_document(
 		db,
 		uid,
@@ -222,11 +235,9 @@ def add_entry(db, path, move, directory):
 		keywords,
 		contributors
 	)
+	db.close()
 
 	# Create entry for meta info
-	# TODO: this fails if it's a directory. Currently it can't be.
-	if entrytype in ("text", "code"): preview_file = uid
-	else:                             preview_file = None
 	preview = None
 	readme = None
 	private = True
@@ -240,7 +251,6 @@ def add_entry(db, path, move, directory):
 		private,
 		codefiles,
 		preview,
-		preview_file,
 		name,
 		ext,
 		author,
@@ -255,18 +265,45 @@ def add_entry(db, path, move, directory):
 	return
 
 
-def update_entry(db, uid):
-
-	entry = meta[uid]
+def update_entry(uid, entry):
 
 	path = os.path.realpath(os.path.join(horizon_archive, uid)) # Resolves symlinks
 
 	if os.path.isdir(path):
-		print("Warning: tried to update directory entry, not implemented yet")
-		# use the entry.readme, but check it first
-		#filename = entry.readme
-		#filename = os.path.join(uid, filename) if filename is not None else uid
-		return
+
+		filename = entry.readme
+		if filename is None: raise Exception(f"No readme provided for directory {uid}")
+		_, ext = os.path.splitext(filename)
+		ext = ext.lower() # TODO: is this done everywhere?
+		if len(ext): ext = ext[1:]
+		filename = os.path.join(path, filename)
+
+		if entry.Type == "code":
+			code = read_text_file(filename)
+			text = ""
+		elif entry.Type == "text":
+			if ext == "pdf":
+				entry.title, text = pdf2text(filename)
+				code = "TODO read tex files if there" # TODO: check for tex, maybe add option for this
+			elif ext == "txt" or len(ext) == 0:
+				text = read_text_file(filename)
+				entry.title = get_title_from_text(text)
+				code = ""
+			elif ext == "html":
+				html = read_text_file(filename)
+				text = html2text(html)
+				entry.title = get_title_from_text(text)
+				code = ""
+			elif ext == "md":
+				code = read_text_file(filename)
+				text = code
+			else:
+				raise Exception(f"Not implemented, unknown file extension {ext}")
+		else:
+			# TODO: should not happen -> error
+			text = ""
+			code = ""
+
 	else:
 		is_text = entry.Type == "text"
 		is_code = entry.Type == "code"
@@ -281,28 +318,31 @@ def update_entry(db, uid):
 		else:
 			raise Exception("Not implemented, need to do for PDF at least")
 		
-		add_document(
-			db,
-			uid,
-			entry.name,
-			entry.ext,
-			entry.Type,
-			text,
-			code,
-			entry.title,
-			entry.author,
-			entry.institution,
-			entry.abstract,
-			entry.keywords,
-			entry.contributors
-		)
 
-		write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
+	db = open_database("db") # TODO: think about putting this in add_document? less modular, but if it's always used like this it'll make sense to put together
+	add_document(
+		db,
+		uid,
+		entry.name,
+		entry.ext,
+		entry.Type,
+		text,
+		code,
+		entry.title,
+		entry.author,
+		entry.institution,
+		entry.abstract,
+		entry.keywords,
+		entry.contributors
+	)
+	db.close()
+
+	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
 
 	return
 
 
-def delete_entry(db, uid):
+def delete_entry(uid):
 	#try:
 	#	db.delete_document(1)
 	#except xapian.DatabaseError as e:
@@ -314,22 +354,23 @@ def delete_entry(db, uid):
 	return
 
 
-def edit_entry_meta(db, uid):
-
-	entry = meta[uid]
+def edit_entry_meta(uid):
 
 	yml = os.path.join(horizon_meta, uid + ".yml")
 	subprocess.run(["vim", yml])
-	meta[uid] = read_yaml(yml, Entry)
+	# TODO: check yaml for consistency
+	entry = read_yaml(yml, Entry)
 
-	update_entry(db, uid)
+	update_entry(uid, entry)
 
 	return
 
 
-def open_entry(db, uid):
+def open_entry(uid):
 
-	entry = meta[uid]
+	meta = read_meta(horizon_meta, Entry)
+
+	entry = meta[uid] # TODO: also only read the specific uid entry
 
 	if len(entry.cmd) == 0: raise Exception("No command to view entry was provided")
 
@@ -344,7 +385,7 @@ def open_entry(db, uid):
 	if file_did_not_change(entry.filestats, new_filestats): return
 	entry.filestats = new_filestats
 
-	update_entry(db, uid)
+	update_entry(uid, entry)
 
 	return
 
@@ -365,27 +406,45 @@ def cd_to_entry(uid):
 
 	subprocess.run("bash")
 
+	os.chdir(horizon_root)
+
+	# Check if need to update database
+	meta = read_meta(horizon_meta, Entry)
+	entry = meta[uid] # TODO: also only read the specific uid entry
+	if entry.readme is not None: path = os.path.join(path, entry.readme)
+	new_filestats = get_filestats(path)
+	if file_did_not_change(entry.filestats, new_filestats): return
+	entry.filestats = new_filestats
+
+	update_entry(uid, entry)
+
 	return
 
 
-def find_entries(db, query):
+def find_entries(query):
 	if query is None:
 		print("Listing the whole database")
 		return
 	
+	db = open_database("db")
 	entries = search(db, " ".join(query), offset=0, pagesize=10)
+	db.close()
 	if len(entries) == 0: return
+
 
 	selection = 0
 	while True:
+
+		meta = read_meta(horizon_meta, Entry) # TODO: only read the required ones
+
 		terminal_menu = stm.TerminalMenu(
 			[
+				# TODO: improve this by creating a list beforehand, same for entries above
 				#f"[{get_alphabet(i)}] " + # TODO: this could be used for shortcuts
 				(meta[uid].title if len(meta[uid].title) else "Unknown") + " (" +
 				" ".join(meta[uid].author.split()[:2]) + ") " +
 				("[dir]" if os.path.isdir(os.path.realpath(os.path.join(horizon_archive, uid))) else "[file]") +
-				"|" +
-				("" if meta[uid].preview is None and meta[uid].preview_file is None else uid)
+				"|" + uid
 				for i, uid in enumerate(entries)
 			],
 			cursor_index=selection,
@@ -395,31 +454,17 @@ def find_entries(db, query):
 			status_bar="", # TODO: Could be used to display some other info, can be function with selection as arg
 			status_bar_style=("bg_black",),
 			#status_bar_below_preview=False,
-			preview_command=(
-				lambda uid: (
-					# TODO: improve this by creating a list beforehand, same for entries above
-					os.path.realpath(os.path.join(horizon_archive, uid)) if os.path.islink(os.path.join(horizon_archive, uid)) else uid,
-					meta[uid].preview if meta[uid].preview is not None
-					else (
-						"" if meta[uid].preview_file is None
-						else
-						read_text_file(
-							os.path.join(
-								horizon_archive,
-								(
-									os.path.join(uid, meta[uid].preview_file)
-									if os.path.isdir(os.path.realpath(os.path.join(horizon_archive, uid)))
-									else meta[uid].preview_file
-								)
-							)
-						)
-						# TODO: this might be slow for large files, but do they get so large?
-					)
-				)
+			preview_command=lambda uid: (
+				(
+					os.path.realpath(os.path.join(horizon_archive, uid))
+					if os.path.islink(os.path.join(horizon_archive, uid))
+					else uid
+				),
+				get_preview(os.path.realpath(os.path.join(horizon_archive, uid)), meta[uid])
 			),
 			preview_title_style=("fg_yellow",),
 			#preview_size=0.5, # Not needed, preview uses the available space
-			clear_screen=True
+			#clear_screen=True
 		)
 		selection = terminal_menu.show()
 
@@ -428,11 +473,11 @@ def find_entries(db, query):
 		key = terminal_menu.chosen_accept_key
 		uid = entries[selection]
 		if key == "enter": # view
-			open_entry(db, uid)
+			open_entry(uid)
 		elif key == "backspace": # edit
 			print(f"deleting {uid}, but not implemented")
 		elif key == "tab": # meta
-			edit_entry_meta(db, uid)
+			edit_entry_meta(uid)
 		elif key == "space": # cd
 			cd_to_entry(uid)
 
@@ -491,25 +536,9 @@ horizon_meta    = os.path.join(horizon_root, "meta")
 if not os.path.exists(horizon_archive): os.makedirs(horizon_archive)
 if not os.path.exists(horizon_meta):    os.makedirs(horizon_meta)
 
-# Database
-db = open_database("db")
-
-# Metadata
-meta = {}
-for f in os.listdir(horizon_meta):
-	meta[os.path.splitext(f)[0]] = read_yaml(os.path.join(horizon_meta, f), Entry)
-
-# Public key
-gpg = open_gpg()
-PUBKEY = "Felix" # TODO, how? need horizon config
-pubkey = get_pubkey(gpg, PUBKEY)
-
 # Execute commands
-try:
-	if   args.cmd == "add":    add_entry(db, args.path, args.move, args.dir)
-	elif args.cmd == "delete": delete_entry(db, args.entries)
-	elif args.cmd == "find":   find_entries(db, args.query)
-	elif args.cmd == "open":   open_entry(db, args.entry)
-finally:
-	db.close()
+if   args.cmd == "add":    add_entry(args.path, args.move, args.dir)
+elif args.cmd == "delete": delete_entry(args.entries)
+elif args.cmd == "find":   find_entries(args.query)
+elif args.cmd == "open":   open_entry(args.entry)
 

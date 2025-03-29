@@ -14,6 +14,14 @@ def read_yaml(filename, obj_class):
 	return obj
 
 
+# Metadata
+def read_meta(path, cls):
+	meta = {}
+	for f in os.listdir(path):
+		meta[os.path.splitext(f)[0]] = read_yaml(os.path.join(path, f), cls)
+	return meta
+
+
 def md5sum(path):
 	hash_md5 = hashlib.md5()
 	f = open(path, "rb")

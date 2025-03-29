@@ -32,7 +32,7 @@ def add_document(
 		db,
 		uid,
 		filename,
-		filetype, # extension
+		extension,
 		entrytype,
 		text,
 		code,
@@ -55,13 +55,16 @@ def add_document(
 	doc.set_data(uid)
 
 	# Add entry type as value
-	doc.add_value(0, entrytype)
+	#doc.add_value(0, entrytype) # Need a match decider for this ... easier way? https://xapian.org/docs/bindings/python/examples.html
+	# Also check out https://github.com/invisibleroads/invisibleroads-tutorials/blob/master/xapian-search-pylons.rst
+	# Currently just make it a field
+	termgenerator.index_text(entrytype, 1, "XT")
 
 	# Add terms
 	# Q: id (which is identification+pubkey+random+ext)
 	# A: author (creator, can be used for matching the entry too)
 	# B: abstract
-	# E: filetype (txt, pdf, python/C etc, ...)
+	# E: extension (txt, pdf, python/C etc, ...)
 	# G: institution of author
 	# K: keywords
 	# O: contributors? How to find these? or better from whom you got it
@@ -69,7 +72,7 @@ def add_document(
 
 	termgenerator.index_text(normalise_unicode(author),       1, "A") # number is word frequency, i.e. a weight for match ranking? chatgpt...
 	termgenerator.index_text(normalise_unicode(abstract),     1, "B")
-	termgenerator.index_text(normalise_unicode(filetype),     1, "E")
+	termgenerator.index_text(normalise_unicode(extension),     1, "E")
 	termgenerator.index_text(normalise_unicode(filename),     1, "F")
 	termgenerator.index_text(normalise_unicode(institution),  1, "G")
 	termgenerator.index_text(normalise_unicode(keywords),     1, "K")
@@ -112,13 +115,14 @@ def search(db, querystring, offset=0, pagesize=10):
 	queryparser.add_prefix("uid", "Q")
 	queryparser.add_prefix("author", "A")
 	queryparser.add_prefix("abstract", "B")
-	queryparser.add_prefix("filetype", "E")
+	queryparser.add_prefix("extension", "E")
 	queryparser.add_prefix("filename", "F")
 	queryparser.add_prefix("institution", "G")
 	queryparser.add_prefix("keywords", "K")
 	queryparser.add_prefix("contributors", "O")
 	queryparser.add_prefix("title", "S")
 	queryparser.add_prefix("code", "X")
+	queryparser.add_prefix("type", "XT")
 
 	query = queryparser.parse_query(querystring) #, xapian.QueryParser.FLAG_WILDCARD)
 	enquire = xapian.Enquire(db)
