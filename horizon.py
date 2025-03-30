@@ -407,12 +407,13 @@ def find_entries(query):
 			codes.append(code)
 
 			# If is text entry, or is a directory with a readme
-			if (
+			if entry.preview is not None: previews.append(entry.preview)
+			elif (
 			(entry.Type == "text" and len(text)) or
 			(not isfile[-1] and len(text))):
-				previews.append(text)
+				        previews.append(text)
 			elif len(code): previews.append(code)
-			else: previews.append("Could not generate a preview automatically")
+			else:           previews.append("Could not generate a preview automatically")
 
 
 		terminal_menu = stm.TerminalMenu(
