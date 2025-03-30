@@ -78,6 +78,7 @@ class Entry:
 		ext=None, # Not the extension of the readme file, but the extension related to this entry, e.g. a julia code repo would use jl
 		filestats=None,
 		cmd=None,
+		detach=False,
 		readme=None,
 		preview=None,
 		codefiles=None,
@@ -95,6 +96,7 @@ class Entry:
 		self.Type = Type
 		self.filestats = filestats
 		self.cmd = cmd
+		self.detach = detach
 		self.readme = readme
 		self.private = private
 		self.codefiles = codefiles
@@ -121,6 +123,8 @@ class Entry:
 			f"\tStats:\t{self.filestats}\n\n"
 			# TODO the rest
 		)
+
+
 
 
 PUBKEY = "Felix" # TODO, how? need horizon config
@@ -184,39 +188,36 @@ def add_entry(path, move, directory):
 		os.symlink(path, new_path)
 		new_path = path # Need to do this for the file stats, the symlink has its own stats
 
+	title, text, code = get_title_text_code(new_path, name, entrytype, None)
 
-	# Get code/text/title
-	title = ""
-	code = ""
-	text = ""
-	# TODO: the below code has overlap with get_title_text_code(), need to refactor
-	if os.path.isdir(new_path):
-		if path is not None: print("TODO: Not implemented, need to ask user what file readme is etc, entry still added")
-		text = ""
-		title = name
-		code = ""
-	elif entrytype == "code":
-		code = read_text_file(new_path)
-		title = name
-	elif entrytype == "text":
-		if ext == "pdf":
-			title, text = pdf2text(new_path)
-			code = "TODO read tex files if there" # TODO: check for tex, maybe add option for this
-		elif ext == "txt" or len(ext) == 0:
-			text = read_text_file(new_path)
-			title = get_title_from_text(text)
-		else:
-			print(f"Warning: text file extension not recognised, dunno what to do with it ({ext})")
-	elif entrytype == "data":
-		print("Sorry not implemented for data files yet")
-
-
-	# Get info for database
+	# Get meta info
 	author = pubkey["uids"][0] # TODO: why is uids a list? and why uidS and not uid
 	institution = "" # TODO: could guess these if pdf or textfile?
 	abstract = ""
 	keywords = ""
 	contributors = ""
+
+	# Create entry for meta info
+	entry = Entry(
+		name,
+		ext,
+		get_filestats(new_path),
+		cmd,
+		detach=False,
+		readme=None,
+		preview=None,
+		codefiles=None,
+		Type=entrytype,
+		title=None, # See above comment why it's None here
+		author=author,
+		institution="",
+		abstract="",
+		keywords="",
+		contributors="",
+		private=True
+	)
+
+	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
 
 	# Add to database
 	db = open_database("db")
@@ -240,102 +241,17 @@ def add_entry(path, move, directory):
 	)
 	db.close()
 
-	# Create entry for meta info
-	entry = Entry(
-		name,
-		ext,
-		get_filestats(new_path),
-		cmd,
-		readme=None,
-		preview=None,
-		codefiles=None,
-		Type=entrytype,
-		title=None, # See above comment why it's None here
-		author=author,
-		institution="",
-		abstract="",
-		keywords="",
-		contributors="",
-		private=True
-	)
-
-	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
-
 	return
 
 
-
-# Returns title, text, code
-def get_title_text_code(uid, entry):
-
-	path = os.path.realpath(os.path.join(horizon_archive, uid)) # Resolves symlinks
-
-	if os.path.isdir(path):
-
-		filename = entry.readme
-
-		code = ""
-		if entry.Type == "code": code = "" # TODO: read codefiles
-
-		# Is there a readme with text in this dir?
-		if filename is None:
-			# No
-			title = entry.name
-			text = ""
-			return title, text, code
-
-		# Yes, there is a readme, get contents based on file extension
-		_, ext = os.path.splitext(filename)
-		ext = ext.lower() # TODO: is this done everywhere?
-		if len(ext): ext = ext[1:]
-		filename = os.path.join(path, filename)
-
-		if ext == "pdf": # extension of readme file
-			title, text = pdf2text(filename)
-		elif ext == "txt" or len(ext) == 0:
-			text = read_text_file(filename)
-			title = get_title_from_text(text)
-		elif ext == "html":
-			html = read_text_file(filename)
-			text = html2text(html)
-			title = get_title_from_text(text)
-		elif ext == "md":
-			# Note: actually a markdown file should not be put as readme. Better is the rendered html
-			text = read_text_file(filename)
-			print("Warning: you should not put a markdown file as a readme, but the rendered html (e.g. with pandoc)")
-		else:
-			raise Exception(f"Not implemented, unknown file extension {ext}")
-
-	elif os.path.isfile(path):
-
-		is_text = entry.Type == "text"
-		is_code = entry.Type == "code"
-		text = ""
-		code = ""
-		title = "Unknown"
-		if is_text or is_code:
-			filecontent = read_text_file(path)
-			if is_text:
-				text = filecontent
-				title = get_title_from_text(text)
-			elif is_code: code = filecontent
-		else:
-			raise Exception("Not implemented, need to do for PDF at least")
-	else:
-		raise FileNotFoundError(f"Could not find entry's file {path}")
-
-
-	# Not entry wasn't updated
-	#write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
-
-	return title, text, code
 
 
 
 
 def update_entry(uid, entry):
 
-	title, text, code = get_title_text_code(uid, entry)
+	path = os.path.realpath(os.path.join(horizon_archive, uid)) # Resolves symlinks
+	title, text, code = get_title_text_code(path, entry.name, entry.Type, entry.readme)
 
 	author       = entry.author
 	institution  = entry.institution
@@ -401,7 +317,9 @@ def open_entry(uid):
 		if entry.readme is None: raise Exception("Entry is a directory but no readme file was provided")
 		path = os.path.join(path, entry.readme)
 
-	subprocess.run([*shlex.split(entry.cmd), path])
+	cmd = [*shlex.split(entry.cmd), path]
+	if entry.detach: subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+	else:            subprocess.run(cmd)
 
 	# Check if need to update database
 	new_filestats = get_filestats(path)
@@ -473,12 +391,6 @@ def find_entries(query):
 			entry = meta[uid]
 			authors.append(" ".join(entry.author.split()[:2]))
 
-			title, text, code = get_title_text_code(uid, entry)
-			if entry.title is not None: title = entry.title
-			titles.append(title)
-			texts.append(text)
-			codes.append(code)
-
 			path = os.path.join(horizon_archive, uid)
 			realpath = os.path.realpath(path)
 			preview_titles.append(realpath if os.path.islink(path) else uid)
@@ -487,6 +399,12 @@ def find_entries(query):
 			if not os.path.exists(path): raise FileNotFoundError(f"Could not find entry at {path}")
 
 			isfile.append(os.path.isfile(path))
+
+			title, text, code = get_title_text_code(path, entry.name, entry.Type, entry.readme)
+			if entry.title is not None: title = entry.title
+			titles.append(title)
+			texts.append(text)
+			codes.append(code)
 
 			# If is text entry, or is a directory with a readme
 			if (

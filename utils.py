@@ -3,6 +3,8 @@ import subprocess
 import mimetypes
 import html2text as HTML2Text
 
+
+
 # TODO: make this proper with config file
 mimetypes.add_type("text/x-julia", ".jl")
 
@@ -79,4 +81,63 @@ def html2text(html):
 	h = HTML2Text.HTML2Text()
 	h.ignore_links = True
 	return h.handle(html)
+
+# Returns title, text, code
+def get_title_text_code(path, name, entrytype, readme):
+
+	if os.path.isdir(path):
+
+		filename = readme
+
+		code = ""
+		if entrytype == "code": code = "" # TODO: read codefiles
+
+		# Is there a readme with text in this dir?
+		if filename is None:
+			# No
+			title = name
+			text = ""
+			return title, text, code
+
+		# Yes, there is a readme, get contents based on file extension
+		_, ext = os.path.splitext(filename)
+		ext = ext.lower() # TODO: is this done everywhere?
+		if len(ext): ext = ext[1:]
+		filename = os.path.join(path, filename)
+
+		if ext == "pdf": # extension of readme file
+			title, text = pdf2text(filename)
+		elif ext == "txt" or len(ext) == 0:
+			text = read_text_file(filename)
+			title = get_title_from_text(text)
+		elif ext == "html":
+			html = read_text_file(filename)
+			text = html2text(html)
+			title = get_title_from_text(text)
+		elif ext == "md":
+			# Note: actually a markdown file should not be put as readme. Better is the rendered html
+			text = read_text_file(filename)
+			print("Warning: you should not put a markdown file as a readme, but the rendered html (e.g. with pandoc)")
+		else:
+			raise Exception(f"Not implemented, unknown file extension {ext}")
+
+	elif os.path.isfile(path):
+
+		is_text = entrytype == "text"
+		is_code = entrytype == "code"
+		text = ""
+		code = ""
+		title = "Unknown"
+		if is_text or is_code:
+			filecontent = read_text_file(path)
+			if is_text:
+				text = filecontent
+				title = get_title_from_text(text)
+			elif is_code: code = filecontent
+		else:
+			raise Exception("Not implemented, need to do for PDF at least")
+	else:
+		raise FileNotFoundError(f"Could not find entry's file {path}")
+
+	return title, text, code
 
