@@ -8,7 +8,6 @@ import random
 
 from auth import *
 from database import *
-from pdftools import *
 from utils import *
 from meta import *
 
