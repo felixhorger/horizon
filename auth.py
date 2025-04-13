@@ -2,7 +2,6 @@ import getpass
 import gnupg
 
 def open_gpg(path="/home/" + getpass.getuser() + "/.gnupg"):
-	user = getpass.getuser()
 	gpg = gnupg.GPG(gnupghome=path)
 	return gpg
 

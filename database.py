@@ -101,6 +101,16 @@ def add_document(
 
 	return
 
+def remove_document(db, uid):
+	uid = u"Q" + uid
+
+	if db.term_exists(uid):
+		db.delete_document(uid)
+	else:
+		print(f"Warning: tried to delete document \"{uid}\" which was not present in the database")
+
+	return
+
 
 def search(db, querystring, offset=0, pagesize=10):
 	# offset - defines starting point within result set

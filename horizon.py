@@ -135,14 +135,10 @@ def add_entry(path, move, directory):
 
 	print(f"Adding entry {path}")
 
-	# Get a name
-	# TODO: Could do: don't ask for ui, make it part of cmdline cmd. If no path given, no name. If path given and exists do add it ... and if path does not exist then make new
-	if path is None: filename = input("Name: ").strip().replace(" ", "_")
-	else:
-		if not os.path.exists(path): raise FileNotFoundError(f"Provided path does not exist: \"{path}\"")
+	# Get a filename
+	if path is None: filename = "" # filename = input("Name: ").strip().replace(" ", "_")
+	elif os.path.exists(path):
 		filename = os.path.basename(path)
-		ui = input("Filename (default is provided name, space replaced by underscore): ")
-		if len(ui): filename = ui
 		filename.strip().replace(" ", "_")
 	
 	name, ext = os.path.splitext(filename)
@@ -152,7 +148,8 @@ def add_entry(path, move, directory):
 	gpg = open_gpg()
 	pubkey = get_pubkey(gpg, PUBKEY)
 	fingerprint = pubkey["fingerprint"]
-	prefix = (name + "_" if len(name) else "") + fingerprint
+	prefix = name + "_" if len(name) else ""
+	suffix = fingerprint + ext
 
 	# Generate a new path for within the horizon archive
 	num_bits = 4*4
@@ -160,7 +157,7 @@ def add_entry(path, move, directory):
 	start = random.randint(0, max_int-1)
 	for i in range(max_int):
 		r = (start + i) % max_int
-		uid = prefix + ("%0.4x" % r) + ext
+		uid = prefix + ("%0.4x" % r) + suffix
 		new_path = os.path.join(horizon_archive, uid)
 		if not os.path.exists(new_path): break
 	if i == max_int-1: raise Exception("Could not find a non-existing file name for the horizon archive, this should not happen!?")
@@ -173,21 +170,15 @@ def add_entry(path, move, directory):
 		if path is None:
 			subprocess.run([*shlex.split(cmd), new_path])
 			if not os.path.isfile(new_path): return
+			path = new_path
 	else:
 		# Is a directory
 		cmd, entrytype, ext = None, "text", "" # TODO: what is a good default value here?
-		if directory: os.makedirs(new_path)
+		if path is None:
+			os.makedirs(new_path)
+			path = new_path
 
-
-	# 'path' exists (checked at beginning of this func),
-	# so can move if required. 'new_path' is valid because of the above.
-	# If 'move' is not true, but path is provided, create a symlink (also know that path exists)
-	if move: shutil.move(path, new_path)
-	elif path is not None:
-		os.symlink(path, new_path)
-		new_path = path # Need to do this for the file stats, the symlink has its own stats
-
-	title, text, code = get_title_text_code(new_path, name, entrytype, None)
+	title, text, code = get_title_text_code(path, name, entrytype, None)
 
 	# Get meta info
 	author = pubkey["uids"][0] # TODO: why is uids a list? and why uidS and not uid
@@ -200,7 +191,7 @@ def add_entry(path, move, directory):
 	entry = Entry(
 		name,
 		ext,
-		get_filestats(new_path),
+		get_filestats(path),
 		cmd,
 		detach=False,
 		readme=None,
@@ -215,30 +206,52 @@ def add_entry(path, move, directory):
 		contributors="",
 		private=True
 	)
+	yml_file = os.path.join(horizon_meta, uid) + ".yml"
 
-	write_yaml(os.path.join(horizon_meta, uid) + ".yml", entry)
-
-	# Add to database
+	# Open database
 	db = open_database("db")
-	add_document(
-		db,
-		uid,
-		name,
-		ext,
-		entrytype,
-		text,
-		code,
-		title,
-		author,
-		institution,
-		abstract,
-		keywords,
-		contributors
-		# Note: Put title found in entry here, but not in the meta data (where None is put).
-		# If the user sets the title in the meta data, horizon will know it has to use that
-		# and not the automatically found one. Same for the below attributes
-	)
-	db.close()
+
+	# Add entry, in case anything fails, revert changes
+	try:
+		write_yaml(yml_file, entry)
+
+		# Add to database
+		add_document(
+			db,
+			uid,
+			name,
+			ext,
+			entrytype,
+			text,
+			code,
+			title,
+			author,
+			institution,
+			abstract,
+			keywords,
+			contributors
+			# Note: Put title found in entry here, but not in the meta data (where None is put).
+			# If the user sets the title in the meta data, horizon will know it has to use that
+			# and not the automatically found one. Same for the below attributes
+		)
+
+		if   move:             shutil.move(path, new_path)
+		elif path != new_path: os.symlink (path, new_path)
+
+
+	except BaseException as e:
+
+		os.remove(yml_file)
+
+		remove_document(db, uid)
+
+		raise e
+	finally:
+		db.close()
+
+
+	# If new directory created, then cd to it
+	if not move and os.path.isdir(new_path): cd_to_entry(uid)
 
 	return
 
@@ -461,9 +474,8 @@ parser = argparse.ArgumentParser(description="Expand yours")
 subparsers = parser.add_subparsers(dest="cmd", metavar="COMMAND", required=True)
 
 add_parser = subparsers.add_parser("add", help="Expands your horizon")
-add_parser_group = add_parser.add_mutually_exclusive_group()
-add_parser_group.add_argument("path", metavar="PATH", nargs="?", help="Optional path to existing file or folder")
-add_parser_group.add_argument("--dir", action="store_true", help="Create a directory not a file")
+add_parser.add_argument("path", metavar="PATH", nargs="?", help="Filename or path to existing file or folder")
+add_parser.add_argument("--dir", action="store_true", help="Create a directory not a file")
 add_parser.add_argument("--move", action="store_true", help="Move file to location managed by horizon")
 
 delete_parser = subparsers.add_parser("delete", help="Delete entry by ID")
