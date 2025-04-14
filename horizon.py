@@ -209,7 +209,7 @@ def add_entry(path, move, directory):
 	yml_file = os.path.join(horizon_meta, uid) + ".yml"
 
 	# Open database
-	db = open_database("db")
+	db = open_database(os.path.join(horizon_root, "db"))
 
 	# Add entry, in case anything fails, revert changes
 	try:
@@ -271,7 +271,7 @@ def update_entry(uid, entry):
 	keywords     = entry.keywords
 	contributors = entry.contributors
 
-	db = open_database("db") # TODO: think about putting this in add_document? less modular, but if it's always used like this it'll make sense to put together
+	db = open_database(os.path.join(horizon_root, "db")) # TODO: think about putting this in add_document? less modular, but if it's always used like this it'll make sense to put together
 	add_document(
 		db,
 		uid,
@@ -379,7 +379,7 @@ def find_entries(query):
 		print("Listing the whole database")
 		return
 	
-	db = open_database("db")
+	db = open_database(os.path.join(horizon_root, "db"))
 	entries = search(db, " ".join(query), offset=0, pagesize=10)
 	db.close()
 	if len(entries) == 0: return
@@ -467,9 +467,48 @@ def find_entries(query):
 	return
 
 
+def read_config(name):
+
+	horizon_root = os.path.expanduser("~/.horizon")
+	config_file = os.path.join(horizon_root, "config.yml")
+
+	if not os.path.isfile(config_file):
+
+		name = ""
+		while len(name) == 0: name = input("Setting up your first horizon, named (CTRL-C to cancel): ")
+
+		if not os.path.isdir(horizon_root): os.makedirs(horizon_root)
+
+		path = input("Store it where? (empty: ~/.horizon/<name>)")
+		if len(path) == 0: path = os.path.expanduser(f"~/.horizon/{name}")
+
+		if not os.path.isdir(path): os.makedirs(path)
+
+		config = {
+			"archives": {name: path},
+			"default_archive": name
+		}
+
+		with open(config_file, "w") as f: config = yaml.dump(config, f)
+
+		horizon_root = path
+
+	else:
+		with open(config_file, "r") as f: config = yaml.safe_load(f)
+
+		if name is None: name = config["default_archive"]
+		if name not in config["archives"]: raise Exception(f"Horizon archive \"{name}\" does not exist")
+		horizon_root = config["archives"][name]
+
+	return horizon_root, config
+
+
+
 
 # Parse cmdline args
 parser = argparse.ArgumentParser(description="Expand yours")
+
+parser.add_argument("-n", "--name", metavar="NAME", nargs="?", help="Name of archive to use")
 
 subparsers = parser.add_subparsers(dest="cmd", metavar="COMMAND", required=True)
 
@@ -501,22 +540,24 @@ args = parser.parse_args()
 
 
 
+
 # Setup
 
 # Change to horizon directory
-if hasattr(args, "path"):
-	if args.path is not None: args.path = os.path.abspath(args.path)
-	elif args.move: raise Exception("Path not provided for option --move")
-horizon_root = os.path.dirname(__file__)
-os.chdir(horizon_root)
-# Note: horizon_root might lie somewhere else, but for now it is kept simple,
-# in general the devs should use os.path.join(horizon_root, "...")
+os.chdir(os.path.dirname(__file__))
+
+# Get config
+horizon_root, config = read_config(args.name)
 
 # Check archive folder
 horizon_archive = os.path.join(horizon_root, "archive")
 horizon_meta    = os.path.join(horizon_root, "meta")
 if not os.path.exists(horizon_archive): os.makedirs(horizon_archive)
 if not os.path.exists(horizon_meta):    os.makedirs(horizon_meta)
+
+if hasattr(args, "path"):
+	if args.path is not None: args.path = os.path.abspath(args.path)
+	elif args.move: raise Exception("Path not provided for option --move")
 
 # Execute commands
 if   args.cmd == "add":    add_entry(args.path, args.move, args.dir)
